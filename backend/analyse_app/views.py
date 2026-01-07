@@ -79,10 +79,27 @@ def get_analyse_data(request):
             
             # 5b. Apply Slices (Slicer filtering)
             match = True
-            for filter_col, filter_val in filters.items():
-                if filter_col in row_dict and str(row_dict[filter_col]) != str(filter_val):
-                    match = False
-                    break
+            for f_col, f_val in filters.items():
+                target_col = f_col.lower()
+                if target_col in row_dict:
+                    val_in_data = row_dict[target_col]
+                    val_to_filter = f_val
+                    
+                    # Numeric-safe comparison
+                    try:
+                        # If both can be floats, compare as floats
+                        if float(val_in_data) == float(val_to_filter):
+                            continue
+                        else:
+                            match = False
+                            break
+                    except (ValueError, TypeError):
+                        # Fallback to string comparison
+                        actual_val = str(val_in_data).strip() if val_in_data is not None else ""
+                        required_val = str(val_to_filter).strip()
+                        if actual_val != required_val:
+                            match = False
+                            break
             
             if match:
                 data_list.append(row_dict)

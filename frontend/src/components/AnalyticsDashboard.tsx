@@ -13,7 +13,8 @@ import {
 type DimensionLevel =
   | 'ALL' | 'year' | 'saison' | 'month' | 'year+saison' | 'year+month'
   | 'EMPLOYE' | 'DEPARTEMENT' | 'DEPARTEMENT+EMPLOYE'
-  | 'produit' | 'categorie' | 'fournisseur' | 'categorie+produit'
+  | 'produit' | 'categorie' | 'fournisseur' | 'categorie+produit' | 'fournisseur+produit'
+  | 'categorie+produit+fournisseur'
   | 'client' | 'pays' | 'pays+client';
 
 type MeasureKey =
@@ -39,15 +40,14 @@ const MEASURE_LABELS: Record<MeasureKey, string> = {
 
 const HIERARCHIES: Record<string, DimensionLevel[]> = {
   temp: ['ALL', 'year', 'year+saison', 'year+month'],
-  emp: ['DEPARTEMENT', 'DEPARTEMENT+EMPLOYE'],
-  prod: ['categorie', 'categorie+produit'],
-  clie: ['pays', 'pays+client']
+  emp: ['ALL', 'DEPARTEMENT', 'DEPARTEMENT+EMPLOYE'],
+  clie: ['ALL', 'pays', 'pays+client']
 };
 
 const COLUMN_TO_DIMENSION: Record<string, string> = {
   year: 'temp', saison: 'temp', month: 'temp', 'year+saison': 'temp', 'year+month': 'temp',
   DEPARTEMENT: 'emp', EMPLOYE: 'emp', 'DEPARTEMENT+EMPLOYE': 'emp',
-  categorie: 'prod', produit: 'prod', fournisseur: 'prod', 'categorie+produit': 'prod',
+  categorie: 'prod', produit: 'prod', fournisseur: 'prod', 'categorie+produit': 'prod', 'fournisseur+produit': 'prod', 'categorie+produit+fournisseur': 'prod',
   pays: 'clie', client: 'clie', 'pays+client': 'clie'
 };
 
@@ -121,9 +121,9 @@ const AnalyticsDashboard = () => {
   // OLAP State - Default State set to most detailed as requested
   const [dimensions, setDimensions] = useState({
     temp: 'year+month' as DimensionLevel,
-    clie: 'client' as DimensionLevel,
+    clie: 'pays+client' as DimensionLevel,
     emp: 'DEPARTEMENT+EMPLOYE' as DimensionLevel,
-    prod: 'produit' as DimensionLevel
+    prod: 'categorie+produit+fournisseur' as DimensionLevel
   });
 
   const [olapData, setOlapData] = useState<OLAPRecord[]>([]);
@@ -133,8 +133,9 @@ const AnalyticsDashboard = () => {
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
   const [isTableFullscreen, setIsTableFullscreen] = useState(false);
   const [filters, setFilters] = useState<Record<string, string>>({});
-  const [showSlicer, setShowSlicer] = useState<{ col: string, x: number, y: number } | null>(null);
+  const [showSlicer, setShowSlicer] = useState<{ cols: string[], activeCol: string, x: number, y: number } | null>(null);
   const [hoveredChart, setHoveredChart] = useState<string | null>(null);
+  const [showProdDrillMenu, setShowProdDrillMenu] = useState<{ x: number, y: number } | null>(null);
 
   // Professional Short Label Mapping
   // Professional Short Label Mapping
@@ -146,11 +147,17 @@ const AnalyticsDashboard = () => {
     if (match) return match;
     // 2. Fuzzy match (contains) - vital for 'year' vs 'dim_year' vs 'annee'
     const aliases: Record<string, string[]> = {
-      year: ['annee', 'yr'], month: ['mois', 'mon'], week: ['semaine'], day: ['jour'],
+      year: ['annee', 'year', 'yr', 'an', 'date_id'],
+      month: ['mois', 'month', 'mon', 'month_id'],
+      saison: ['season', 'sais', 'trimestre'],
+      week: ['semaine'], day: ['jour'],
       client: ['cli_nom', 'customer'], product: ['produit', 'libelle_produit'], country: ['pays']
     };
     if (aliases[norm]) {
-      match = keys.find(k => aliases[norm].some(a => k.toLowerCase().includes(a)));
+      match = keys.find(k => {
+        const lowerK = k.toLowerCase();
+        return aliases[norm].some(a => lowerK === a || lowerK.includes(a));
+      });
       if (match) return match;
     }
     // 3. Last fallback: look for partial inclusion
@@ -162,22 +169,54 @@ const AnalyticsDashboard = () => {
 
   const getDimensionLabel = (slug: string) => {
     if (!slug) return 'Select...';
+    // Specific Column Mappings (Lowercase input expected)
+    const s = String(slug).toLowerCase();
+    const specificMapping: Record<string, string> = {
+      'year': 'Year', 'annee': 'Year',
+      'month': 'Month', 'mois': 'Month',
+      'saison': 'Season',
+      'categorie': 'Category', 'produit': 'Product', 'fournisseur': 'Supplier',
+      'client': 'Client', 'pays': 'Country',
+      'employe': 'Employee', 'departement': 'Department',
+      'all': 'All'
+    };
+
+    if (specificMapping[s]) return specificMapping[s];
+    if (specificMapping[slug]) return specificMapping[slug];
+
     const dimKey = COLUMN_TO_DIMENSION[slug];
     const mapping: Record<string, string> = {
       temp: 'Time',
-      prod: 'Prod',
-      clie: 'Clie',
+      prod: 'Product',
+      clie: 'Client',
       emp: 'Staff'
     };
     return mapping[dimKey] || mapping[slug] || String(slug).toUpperCase();
   };
 
-  const handleHierarchyNav = (dimKey: string, direction: 'up' | 'down') => {
-    const hierarchy = HIERARCHIES[dimKey];
-    if (!hierarchy) return;
+  // Helper for dynamic hierarchy resolution
+  const getHierarchyForDim = (dimKey: string, dimVal: string): DimensionLevel[] => {
+    if (dimKey === 'prod') {
+      if (['categorie', 'categorie+produit'].includes(dimVal)) return ['ALL', 'categorie', 'categorie+produit'];
+      if (['fournisseur', 'fournisseur+produit'].includes(dimVal)) return ['ALL', 'fournisseur', 'fournisseur+produit'];
+      if (dimVal === 'ALL') return ['ALL', 'categorie', 'categorie+produit'];
+      return [dimVal as DimensionLevel];
+    }
+    return HIERARCHIES[dimKey] || [];
+  };
+
+  const handleHierarchyNav = (dimKey: string, direction: 'up' | 'down', coords?: { x: number, y: number }) => {
+    const hierarchy = getHierarchyForDim(dimKey, dimensions[dimKey as keyof typeof dimensions]);
+    if (!hierarchy.length) return;
+
+    if (dimKey === 'prod' && dimensions.prod === 'ALL' && direction === 'down' && coords) {
+      setShowProdDrillMenu(coords);
+      return;
+    }
 
     const currentVal = dimensions[dimKey as keyof typeof dimensions];
     const currentIndex = hierarchy.indexOf(currentVal);
+    if (currentIndex === -1) return;
 
     if (direction === 'down' && currentIndex < hierarchy.length - 1) {
       updateDimension(dimKey as keyof typeof dimensions, hierarchy[currentIndex + 1]);
@@ -292,10 +331,7 @@ const AnalyticsDashboard = () => {
         break;
       case 'prod':
         if (dimensions.prod === 'categorie') newDimensions.prod = 'categorie+produit';
-        // Add more if needed based on "Parallel Hierarchies" (e.g., supplier -> product)?
-        // Currently prod hierarchy seems to be simple cat -> prod or supplier -> prod.
-        // If user is at supplier, we might want to see products from that supplier.
-        if (dimensions.prod === 'fournisseur') newDimensions.prod = 'produit'; // Or custom handling if specific hierarchy exists
+        else if (dimensions.prod === 'fournisseur') newDimensions.prod = 'fournisseur+produit';
         break;
       case 'clie':
         if (dimensions.clie === 'pays') newDimensions.clie = 'pays+client';
@@ -332,6 +368,7 @@ const AnalyticsDashboard = () => {
       emp: 'ALL',
       prod: 'ALL'
     });
+    setFilters({});
     setDrillPath([]);
   };
 
@@ -617,10 +654,10 @@ const AnalyticsDashboard = () => {
                   {[
                     { key: 'temp', val: dimensions.temp, set: (v: any) => updateDimension('temp', v), opts: [['ALL', 'All Time'], ['year', 'Year'], ['year+saison', 'Season & Year'], ['year+month', 'Month & Year (Season)'], ['DIVIDER', ''], ['saison', 'Season'], ['month', 'Month']], label: 'Time', icon: Calendar },
                     { key: 'emp', val: dimensions.emp, set: (v: any) => updateDimension('emp', v), opts: [['ALL', 'All Staff'], ['EMPLOYE', 'Employee'], ['DEPARTEMENT', 'Department'], ['DEPARTEMENT+EMPLOYE', 'Dept & Emp']], label: 'Staff', icon: User },
-                    { key: 'prod', val: dimensions.prod, set: (v: any) => updateDimension('prod', v), opts: [['ALL', 'All Products'], ['produit', 'Product'], ['categorie', 'Category'], ['fournisseur', 'Supplier'], ['categorie+produit', 'Cat & Prod']], label: 'Product', icon: Box },
+                    { key: 'prod', val: dimensions.prod, set: (v: any) => updateDimension('prod', v), opts: [['ALL', 'All Products'], ['categorie', 'Category'], ['categorie+produit', 'Category & Product'], ['fournisseur', 'Supplier'], ['fournisseur+produit', 'Supplier & Product'], ['DIVIDER', ''], ['produit', 'Product Only'], ['categorie+produit+fournisseur', 'Cat & Prod & Supp']], label: 'Product', icon: Box },
                     { key: 'clie', val: dimensions.clie, set: (v: any) => updateDimension('clie', v), opts: [['ALL', 'All Clients'], ['client', 'Client'], ['pays', 'Country'], ['pays+client', 'Country & Client']], label: 'Client', icon: MapPin }
                   ].map((dim, idx) => {
-                    const hierarchy = HIERARCHIES[dim.key];
+                    const hierarchy = getHierarchyForDim(dim.key, dim.val);
                     const currentIndex = hierarchy ? hierarchy.indexOf(dim.val) : -1;
                     const canDrill = hierarchy && currentIndex !== -1 && currentIndex < hierarchy.length - 1;
                     const canRoll = hierarchy && currentIndex !== -1 && currentIndex > 0;
@@ -671,7 +708,10 @@ const AnalyticsDashboard = () => {
                           <div className="flex items-center justify-center w-full mt-1.5">
                             <div className={`flex items-center gap-4 p-0.5 px-3 rounded-full border-2 transition-all duration-300 ${isDarkMode ? 'bg-blue-900/30 border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.2)]' : 'bg-blue-100 border-blue-200 shadow-[0_0_15px_rgba(59,130,246,0.15)]'}`}>
                               <button
-                                onClick={() => handleHierarchyNav(dim.key, 'up')}
+                                onClick={(e) => {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  handleHierarchyNav(dim.key, 'up', { x: rect.left, y: rect.bottom });
+                                }}
                                 disabled={!canRoll}
                                 className={`p-1 rounded-full transition-all ${canRoll ? 'text-blue-500 hover:bg-white dark:hover:bg-slate-700' : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'}`}
                                 title="Roll-up"
@@ -679,7 +719,10 @@ const AnalyticsDashboard = () => {
                                 <ChevronUp className="w-2.5 h-2.5" />
                               </button>
                               <button
-                                onClick={() => handleHierarchyNav(dim.key, 'down')}
+                                onClick={(e) => {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  handleHierarchyNav(dim.key, 'down', { x: rect.left, y: rect.bottom });
+                                }}
                                 disabled={!canDrill}
                                 className={`p-1 rounded-full transition-all ${canDrill ? 'text-blue-500 hover:bg-white dark:hover:bg-slate-700' : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'}`}
                                 title="Drill-down"
@@ -690,13 +733,22 @@ const AnalyticsDashboard = () => {
                                 <button
                                   onClick={(e) => {
                                     const rect = e.currentTarget.getBoundingClientRect();
-                                    const colTargetCandidate = dim.val.includes('+') ? dim.val.split('+').pop()! : dim.val;
-                                    const dataKeys = olapData.length > 0 ? Object.keys(olapData[0]) : dimensionColumns;
-                                    const colTarget = resolveColumn(colTargetCandidate, dataKeys);
+                                    const candidates = dim.val.split('+');
+                                    const resolvedCols = candidates.map(c => resolveColumn(c, dimensionColumns)).filter(Boolean);
 
-                                    setShowSlicer({ col: colTarget, x: rect.left, y: rect.bottom });
+                                    if (resolvedCols.length > 0) {
+                                      setShowSlicer({
+                                        cols: resolvedCols,
+                                        activeCol: resolvedCols[resolvedCols.length - 1],
+                                        x: rect.left,
+                                        y: rect.bottom
+                                      });
+                                    }
                                   }}
-                                  className={`p-1 rounded-full transition-all ${filters[dim.val.includes('+') ? dim.val.split('+').pop()! : dim.val] ? 'text-white bg-emerald-500 shadow-sm' : 'text-blue-500 hover:bg-white dark:hover:bg-slate-700'}`}
+                                  className={`p-1 rounded-full transition-all ${dim.val.split('+').some(c => {
+                                    const resolved = resolveColumn(c, dimensionColumns);
+                                    return filters[resolved];
+                                  }) ? 'text-white bg-emerald-500 shadow-sm' : 'text-blue-500 hover:bg-white dark:hover:bg-slate-700'}`}
                                   title="Filter (Slice)"
                                 >
                                   <Filter className="w-2.5 h-2.5" />
@@ -1039,35 +1091,65 @@ const AnalyticsDashboard = () => {
                   {isTableFullscreen && (
                     <div className="hidden lg:flex items-center gap-2 flex-1 px-4 border-x border-slate-100 dark:border-slate-800 mx-4 justify-center">
                       {Object.entries({ temp: dimensions.temp, emp: dimensions.emp, prod: dimensions.prod, clie: dimensions.clie }).map(([key, val]) => {
-                        const hierarchy = HIERARCHIES[key];
-                        const currentIndex = hierarchy ? hierarchy.indexOf(val) : -1;
-                        const canDrill = hierarchy && currentIndex < hierarchy.length - 1;
-                        const canRoll = hierarchy && currentIndex > 0;
+                        const hierarchy = getHierarchyForDim(key, val);
+                        const currentIndex = hierarchy.indexOf(val);
+                        const canDrill = currentIndex !== -1 && currentIndex < hierarchy.length - 1;
+                        const canRoll = currentIndex !== -1 && currentIndex > 0;
                         return (
                           <div key={key} className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/40 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-800 h-8 shrink-0 hover:border-blue-400 transition-colors">
                             <span className="text-[9px] font-black uppercase text-blue-600 dark:text-blue-400 px-1 border-r border-slate-200 dark:border-slate-700 mr-1">{key}</span>
                             <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 max-w-[60px] truncate">{val}</span>
                             <div className="flex items-center gap-0.5 ml-1 border-l border-slate-200 dark:border-slate-700 pl-1">
-                              <button onClick={() => handleHierarchyNav(key, 'up')} disabled={!canRoll} className={`p-1 rounded-full transition-all ${canRoll ? 'text-blue-500 hover:bg-white dark:hover:bg-slate-700' : 'text-slate-300 cursor-not-allowed'}`}><ChevronUp className="w-2.5 h-2.5" /></button>
-                              <button onClick={() => handleHierarchyNav(key, 'down')} disabled={!canDrill} className={`p-1 rounded-full transition-all ${canDrill ? 'text-blue-500 hover:bg-white dark:hover:bg-slate-700' : 'text-slate-300 cursor-not-allowed'}`}><ChevronDown className="w-2.5 h-2.5" /></button>
                               <button
                                 onClick={(e) => {
                                   const rect = e.currentTarget.getBoundingClientRect();
-                                  const colTargetCandidate = val.includes('+') ? val.split('+').pop()! : val;
-                                  const dataKeys = olapData.length > 0 ? Object.keys(olapData[0]) : dimensionColumns;
-                                  // Special handling for ALL - fallback to known hierarchy defaults
-                                  let colToResolve = colTargetCandidate;
-                                  if (colTargetCandidate === 'ALL') {
-                                    if (key === 'temp') colToResolve = 'year';
-                                    else if (key === 'emp') colToResolve = 'DEPARTEMENT';
-                                    else if (key === 'prod') colToResolve = 'categorie';
-                                    else if (key === 'clie') colToResolve = 'pays';
-                                  }
-
-                                  const colTarget = resolveColumn(colToResolve, dataKeys);
-                                  setShowSlicer({ col: colTarget, x: rect.left, y: rect.bottom });
+                                  handleHierarchyNav(key, 'up', { x: rect.left, y: rect.bottom });
                                 }}
-                                className={`p-1 rounded-full transition-all ${filters[val.includes('+') ? val.split('+').pop()! : val] ? 'text-white bg-emerald-500' : 'text-blue-500 hover:bg-white dark:hover:bg-slate-700'}`}
+                                disabled={!canRoll}
+                                className={`p-1 rounded-full transition-all ${canRoll ? 'text-blue-500 hover:bg-white dark:hover:bg-slate-700' : 'text-slate-300 cursor-not-allowed'}`}
+                              >
+                                <ChevronUp className="w-2.5 h-2.5" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  handleHierarchyNav(key, 'down', { x: rect.left, y: rect.bottom });
+                                }}
+                                disabled={!canDrill}
+                                className={`p-1 rounded-full transition-all ${canDrill ? 'text-blue-500 hover:bg-white dark:hover:bg-slate-700' : 'text-slate-300 cursor-not-allowed'}`}
+                              >
+                                <ChevronDown className="w-2.5 h-2.5" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const candidates = val.split('+');
+                                  const dataKeys = olapData.length > 0 ? Object.keys(olapData[0]) : dimensionColumns;
+
+                                  const resolvedCols = candidates.map(c => {
+                                    let colToResolve = c;
+                                    if (c === 'ALL') {
+                                      if (key === 'temp') colToResolve = 'year';
+                                      else if (key === 'emp') colToResolve = 'DEPARTEMENT';
+                                      else if (key === 'prod') colToResolve = 'categorie';
+                                      else if (key === 'clie') colToResolve = 'pays';
+                                    }
+                                    return resolveColumn(colToResolve, dimensionColumns);
+                                  }).filter(Boolean);
+
+                                  if (resolvedCols.length > 0) {
+                                    setShowSlicer({
+                                      cols: resolvedCols,
+                                      activeCol: resolvedCols[resolvedCols.length - 1],
+                                      x: rect.left,
+                                      y: rect.bottom
+                                    });
+                                  }
+                                }}
+                                className={`p-1 rounded-full transition-all ${val.split('+').some(c => {
+                                  const resolved = resolveColumn(c, dimensionColumns);
+                                  return filters[resolved];
+                                }) ? 'text-white bg-emerald-500' : 'text-blue-500 hover:bg-white dark:hover:bg-slate-700'}`}
                               >
                                 <Filter className="w-2.5 h-2.5" />
                               </button>
@@ -1137,7 +1219,7 @@ const AnalyticsDashboard = () => {
                           <th
                             key={col}
                             className={`
-                              px-2 py-2 text-[10px] whitespace-nowrap font-bold uppercase tracking-wider text-center cursor-pointer transition-all 
+                              ${isTableFullscreen ? 'px-1 py-1.5' : 'px-2 py-2'} text-[10px] ${isTableFullscreen ? 'whitespace-normal min-w-[60px]' : 'whitespace-nowrap'} font-bold uppercase tracking-wider text-center cursor-pointer transition-all 
                               border-r border-b-2 border-slate-200 dark:border-slate-700/60
                               ${isDarkMode ? 'bg-[#1e293b] text-blue-300' : 'bg-slate-50 text-blue-700'}
                               hover:bg-slate-100 dark:hover:bg-slate-700
@@ -1160,7 +1242,7 @@ const AnalyticsDashboard = () => {
                           <th
                             key={m}
                             className={`
-                              px-2 py-2 text-[10px] whitespace-nowrap font-bold uppercase tracking-wider text-center cursor-pointer transition-all 
+                              ${isTableFullscreen ? 'px-1 py-1.5' : 'px-2 py-2'} text-[10px] ${isTableFullscreen ? 'whitespace-normal min-w-[50px]' : 'whitespace-nowrap'} font-bold uppercase tracking-wider text-center cursor-pointer transition-all 
                               border-r border-b-2 border-slate-200 dark:border-slate-700/60
                               ${isDarkMode ? 'bg-[#1e293b] text-slate-100' : 'bg-slate-50 text-slate-800'}
                               hover:bg-slate-100 dark:hover:bg-slate-700
@@ -1179,7 +1261,7 @@ const AnalyticsDashboard = () => {
                         ))}
                       </tr>
                     </thead>
-                    <tbody className={`divide-y divide-slate-100 dark:divide-slate-700/50 transition-all duration-300 ${loading ? 'opacity-40 grayscale-[0.5]' : 'opacity-100'}`}>
+                    <tbody className={`divide-y divide-slate-100 dark:divide-slate-700/50 transition-all duration-300 ${loading ? 'opacity-40 grayscale-[0.5]' : 'opacity-100'} ${isTableFullscreen ? 'text-[9px]' : 'text-[11px]'}`}>
                       {paginatedData.map((row, i) => (
                         <tr
                           key={i}
@@ -1196,7 +1278,7 @@ const AnalyticsDashboard = () => {
                             <td
                               key={col}
                               className={`
-                                px-2 py-3 text-center text-[10px] whitespace-nowrap font-bold tracking-tight
+                                ${isTableFullscreen ? 'px-1 py-2' : 'px-2 py-3'} text-center ${isTableFullscreen ? 'text-[9px] whitespace-normal' : 'text-[10px] whitespace-nowrap'} font-bold tracking-tight
                                 border-r border-b border-slate-100 dark:border-slate-800/40
                                 ${theme.text}
                                 transition-all duration-200
@@ -1211,11 +1293,11 @@ const AnalyticsDashboard = () => {
                             <td
                               key={m}
                               className={`
-                                px-2 py-2 tabular-nums font-bold text-[10px] whitespace-nowrap text-center 
+                                ${isTableFullscreen ? 'px-0.5 py-1.5' : 'px-2 py-2'} tabular-nums font-bold ${isTableFullscreen ? 'text-[9px]' : 'text-[10px]'} whitespace-nowrap text-center 
                                 border-r border-b border-slate-100 dark:border-slate-800/40
                                 ${theme.text} 
                                 ${sortColumn === m ? (isDarkMode ? 'bg-emerald-900/20' : 'bg-emerald-50/30') : ''}
-                                ${m === 'moyenne_retard' ? 'min-w-[80px]' : ''}
+                                ${m === 'moyenne_retard' ? (isTableFullscreen ? 'min-w-[60px]' : 'min-w-[80px]') : ''}
                               `}
                             >
                               {m === 'moyenne_retard' ? (
@@ -1273,34 +1355,113 @@ const AnalyticsDashboard = () => {
         <>
           <div className="fixed inset-0 z-[250]" onClick={() => setShowSlicer(null)}></div>
           <div
-            className={`fixed z-[260] w-48 rounded-xl border ${theme.border} ${isDarkMode ? 'bg-[#1e293b]' : 'bg-white'} shadow-2xl p-2 animate-in fade-in zoom-in-95`}
+            className={`fixed z-[260] w-56 rounded-xl border ${theme.border} ${isDarkMode ? 'bg-[#1e293b]' : 'bg-white'} shadow-2xl p-2 animate-in fade-in zoom-in-95`}
             style={{ left: showSlicer.x, top: showSlicer.y + 10 }}
           >
-            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 px-2 border-b border-slate-100 pb-1">Filter {showSlicer.col}</div>
+            {/* Multi-Column Tabs */}
+            {showSlicer.cols.length > 1 && (
+              <div className="flex gap-1 mb-2 p-1 bg-slate-50 dark:bg-slate-800/60 rounded-lg">
+                {showSlicer.cols.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => setShowSlicer({ ...showSlicer, activeCol: c })}
+                    className={`flex-1 py-1.5 text-[9px] font-black uppercase tracking-tighter rounded-md transition-all ${showSlicer.activeCol === c ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
+                  >
+                    {getDimensionLabel(c)}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 px-2 border-b border-slate-100 dark:border-slate-800 pb-1 flex justify-between items-center">
+              <span>Filter {getDimensionLabel(showSlicer.activeCol)}</span>
+              {filters[showSlicer.activeCol] && (
+                <button
+                  onClick={() => {
+                    const nf = { ...filters };
+                    delete nf[showSlicer.activeCol];
+                    setFilters(nf);
+                  }}
+                  className="text-[8px] text-rose-500 hover:underline"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
             <div className="max-h-48 overflow-y-auto scrollbar-thin">
               <button
                 onClick={() => {
                   const nf = { ...filters };
-                  delete nf[showSlicer.col];
+                  delete nf[showSlicer.activeCol];
                   setFilters(nf);
                   setShowSlicer(null);
                 }}
-                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold mb-1 transition-all ${!filters[showSlicer.col] ? 'bg-blue-500 text-white' : `${theme.text} hover:bg-slate-100`}`}
+                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold mb-1 transition-all ${!filters[showSlicer.activeCol] ? 'bg-blue-500 text-white' : `${theme.text} hover:bg-slate-100 dark:hover:bg-slate-800`}`}
               >
                 (All)
               </button>
-              {Array.from(new Set(olapData.map(r => String(r[showSlicer.col])))).sort().map(val => (
+              {Array.from(new Set(olapData.map(r => {
+                // Robust key matching inside data record
+                const target = showSlicer.activeCol;
+                let val = r[target];
+                if (val === undefined) {
+                  // Fallback: Case-insensitive key search
+                  const actualKey = Object.keys(r).find(k => k.toLowerCase() === target.toLowerCase());
+                  if (actualKey) val = r[actualKey];
+                }
+                return String(val ?? '').trim();
+              }))).filter(v => v !== '').sort((a, b) => {
+                // If numeric, sort numerically
+                if (!isNaN(Number(a)) && !isNaN(Number(b))) return Number(a) - Number(b);
+                return a.localeCompare(b);
+              }).map(val => (
                 <button
                   key={val}
                   onClick={() => {
-                    setFilters({ ...filters, [showSlicer.col]: val });
+                    setFilters({ ...filters, [showSlicer.activeCol]: val });
                     setShowSlicer(null);
                   }}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold mb-1 transition-all ${filters[showSlicer.col] === val ? 'bg-blue-500 text-white' : `${theme.text} hover:bg-slate-100`}`}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold mb-1 transition-all ${filters[showSlicer.activeCol] === val ? 'bg-blue-500 text-white' : `${theme.text} hover:bg-slate-100 dark:hover:bg-slate-800`}`}
                 >
                   {val}
                 </button>
               ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Product Drill Path Selector Overlay */}
+      {showProdDrillMenu && (
+        <>
+          <div className="fixed inset-0 z-[250]" onClick={() => setShowProdDrillMenu(null)}></div>
+          <div
+            className={`fixed z-[260] w-48 rounded-xl border ${theme.border} ${isDarkMode ? 'bg-[#1e293b]' : 'bg-white'} shadow-2xl p-3 animate-in fade-in zoom-in-95`}
+            style={{ left: showProdDrillMenu.x, top: showProdDrillMenu.y + 10 }}
+          >
+            <div className="text-[10px] font-black uppercase tracking-widest text-blue-500 mb-3 px-1 border-b border-blue-100 pb-1">Select Drill Path</div>
+            <div className="space-y-2">
+              <button
+                onClick={() => {
+                  updateDimension('prod', 'categorie');
+                  setShowProdDrillMenu(null);
+                }}
+                className={`w-full flex items-center justify-between p-2 rounded-lg text-xs font-bold transition-all ${isDarkMode ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-100 text-slate-800'} border ${theme.border}`}
+              >
+                <span>By Category</span>
+                <ChevronRight className="w-3.5 h-3.5 opacity-50" />
+              </button>
+              <button
+                onClick={() => {
+                  updateDimension('prod', 'fournisseur');
+                  setShowProdDrillMenu(null);
+                }}
+                className={`w-full flex items-center justify-between p-2 rounded-lg text-xs font-bold transition-all ${isDarkMode ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-100 text-slate-800'} border ${theme.border}`}
+              >
+                <span>By Supplier</span>
+                <ChevronRight className="w-3.5 h-3.5 opacity-50" />
+              </button>
             </div>
           </div>
         </>
