@@ -35,6 +35,7 @@ def get_analyse_data(request):
         clie = data.get('clie', 'ALL')
         emp = data.get('emp', 'ALL')
         prod = data.get('prod', 'ALL')
+        filters = data.get('filters', {}) # Specific member filters (Slice)
         
         # 2. Connect to Oracle (Using Pool if available, or error out)
         if not pool:
@@ -44,13 +45,9 @@ def get_analyse_data(request):
         cursor = connection.cursor()
         
         # 3. Call ANALYSE Procedure
-        # Need to determine if using oracledb or cx_Oracle depending on what's installed
-        # The existing code imported oracledb.
-        
         if oracledb:
             ref_cursor = cursor.var(oracledb.CURSOR)
         else:
-            # Fallback (though unlikely if pool works)
             import cx_Oracle
             ref_cursor = cursor.var(cx_Oracle.CURSOR)
 
@@ -76,11 +73,19 @@ def get_analyse_data(request):
             row_dict = {}
             for i, col in enumerate(columns):
                 value = row[i]
-                # Convert Decimal to float for JSON serialization
                 if isinstance(value, Decimal):
                     value = float(value)
                 row_dict[col] = value
-            data_list.append(row_dict)
+            
+            # 5b. Apply Slices (Slicer filtering)
+            match = True
+            for filter_col, filter_val in filters.items():
+                if filter_col in row_dict and str(row_dict[filter_col]) != str(filter_val):
+                    match = False
+                    break
+            
+            if match:
+                data_list.append(row_dict)
         
         # 6. Extract Dimension Columns (all columns that are not measures)
         measure_columns = {
@@ -88,7 +93,6 @@ def get_analyse_data(request):
             'min_retard', 'max_retard', 'moy_prevue',
             'moy_reelle', 'ecart_moyen'
         }
-        # Note: Set intersection might be case sensitive, columns are lowercased above.
         dimension_columns = [col for col in columns if col not in measure_columns]
         
         # 7. Return JSON
@@ -96,10 +100,7 @@ def get_analyse_data(request):
             'success': True,
             'data': data_list,
             'dimensions': {
-                'temp': temp,
-                'clie': clie,
-                'emp': emp,
-                'prod': prod
+                'temp': temp, 'clie': clie, 'emp': emp, 'prod': prod, 'filters': filters
             },
             'metadata': {
                 'dimension_count': sum(1 for d in [temp, clie, emp, prod] if d != 'ALL'),

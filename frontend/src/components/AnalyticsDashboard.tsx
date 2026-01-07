@@ -4,10 +4,10 @@ import {
   AreaChart, Area
 } from 'recharts';
 import {
-  Filter, Download, Share2, MoreHorizontal, Calendar, Users,
-  ArrowUpRight, ArrowDownRight, Clock, AlertCircle, ChevronDown, ChevronUp,
-  Layout, Search, Bell, Menu, X, ChevronRight, ChevronLeft,
-  Moon, Sun, Activity, Package, TrendingUp, Layers, Box, MapPin, User, Briefcase, Loader2
+  Filter, Calendar, ChevronDown, ChevronUp,
+  Search, X, ChevronRight, ChevronLeft,
+  Moon, Sun, Activity, Package, TrendingUp, Layers, Box, MapPin, User, Briefcase, Loader2,
+  Maximize2, Minimize2, ArrowUp, ArrowDown, AlertCircle
 } from 'lucide-react';
 
 type DimensionLevel =
@@ -37,6 +37,20 @@ const MEASURE_LABELS: Record<MeasureKey, string> = {
   ecart_moyen: 'Avg Dev'
 };
 
+const HIERARCHIES: Record<string, DimensionLevel[]> = {
+  temp: ['ALL', 'year', 'year+saison', 'year+month'],
+  emp: ['DEPARTEMENT', 'DEPARTEMENT+EMPLOYE'],
+  prod: ['categorie', 'categorie+produit'],
+  clie: ['pays', 'pays+client']
+};
+
+const COLUMN_TO_DIMENSION: Record<string, string> = {
+  year: 'temp', saison: 'temp', month: 'temp', 'year+saison': 'temp', 'year+month': 'temp',
+  DEPARTEMENT: 'emp', EMPLOYE: 'emp', 'DEPARTEMENT+EMPLOYE': 'emp',
+  categorie: 'prod', produit: 'prod', fournisseur: 'prod', 'categorie+produit': 'prod',
+  pays: 'clie', client: 'clie', 'pays+client': 'clie'
+};
+
 const tableMeasures: MeasureKey[] = [
   'nombre_commandes',
   'total_retard',
@@ -49,16 +63,6 @@ const tableMeasures: MeasureKey[] = [
 ];
 
 // Color Palette for Dark/Light modes
-const COLORS = {
-  primary: '#3b82f6', // blue-500
-  success: '#10b981', // emerald-500
-  warning: '#f59e0b', // amber-500
-  danger: '#f43f5e', // rose-500
-  darkBg: '#0f172a', // slate-900
-  lightBg: '#f8fafc', // slate-50
-  glassLight: 'rgba(255, 255, 255, 0.7)',
-  glassDark: 'rgba(30, 41, 59, 0.7)'
-};
 
 interface OLAPRecord {
   [key: string]: any;
@@ -116,9 +120,9 @@ const AnalyticsDashboard = () => {
 
   // OLAP State - Default State set to most detailed as requested
   const [dimensions, setDimensions] = useState({
-    temp: 'month' as DimensionLevel,
+    temp: 'year+month' as DimensionLevel,
     clie: 'client' as DimensionLevel,
-    emp: 'EMPLOYE' as DimensionLevel,
+    emp: 'DEPARTEMENT+EMPLOYE' as DimensionLevel,
     prod: 'produit' as DimensionLevel
   });
 
@@ -127,17 +131,72 @@ const AnalyticsDashboard = () => {
   const [drillPath, setDrillPath] = useState<DrillPathItem[]>([]);
   const [dimensionColumns, setDimensionColumns] = useState<string[]>([]);
   const [hoveredRow, setHoveredRow] = useState<number | null>(null);
+  const [isTableFullscreen, setIsTableFullscreen] = useState(false);
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [showSlicer, setShowSlicer] = useState<{ col: string, x: number, y: number } | null>(null);
+  const [hoveredChart, setHoveredChart] = useState<string | null>(null);
 
   // Professional Short Label Mapping
+  // Professional Short Label Mapping
+  const resolveColumn = (colName: string, keys: string[]) => {
+    if (!colName) return '';
+    const norm = colName.toLowerCase();
+    // 1. Exact match
+    let match = keys.find(k => k.toLowerCase() === norm);
+    if (match) return match;
+    // 2. Fuzzy match (contains) - vital for 'year' vs 'dim_year' vs 'annee'
+    const aliases: Record<string, string[]> = {
+      year: ['annee', 'yr'], month: ['mois', 'mon'], week: ['semaine'], day: ['jour'],
+      client: ['cli_nom', 'customer'], product: ['produit', 'libelle_produit'], country: ['pays']
+    };
+    if (aliases[norm]) {
+      match = keys.find(k => aliases[norm].some(a => k.toLowerCase().includes(a)));
+      if (match) return match;
+    }
+    // 3. Last fallback: look for partial inclusion
+    match = keys.find(k => k.toLowerCase().includes(norm));
+    if (match) return match;
+
+    return colName;
+  };
+
   const getDimensionLabel = (slug: string) => {
     if (!slug) return 'Select...';
+    const dimKey = COLUMN_TO_DIMENSION[slug];
     const mapping: Record<string, string> = {
       temp: 'Time',
       prod: 'Prod',
       clie: 'Clie',
       emp: 'Staff'
     };
-    return mapping[slug] || String(slug).toUpperCase();
+    return mapping[dimKey] || mapping[slug] || String(slug).toUpperCase();
+  };
+
+  const handleHierarchyNav = (dimKey: string, direction: 'up' | 'down') => {
+    const hierarchy = HIERARCHIES[dimKey];
+    if (!hierarchy) return;
+
+    const currentVal = dimensions[dimKey as keyof typeof dimensions];
+    const currentIndex = hierarchy.indexOf(currentVal);
+
+    if (direction === 'down' && currentIndex < hierarchy.length - 1) {
+      updateDimension(dimKey as keyof typeof dimensions, hierarchy[currentIndex + 1]);
+    } else if (direction === 'up' && currentIndex > 0) {
+      updateDimension(dimKey as keyof typeof dimensions, hierarchy[currentIndex - 1]);
+    }
+  };
+
+  const updateDimension = (key: keyof typeof dimensions, val: DimensionLevel) => {
+    const nextDimensions = { ...dimensions, [key]: val };
+    const allCount = Object.values(nextDimensions).filter(v => v === 'ALL').length;
+
+    if (allCount === 4) {
+      setError("Cannot select 'ALL' for all dimensions simultaneously.");
+      return;
+    }
+
+    setError(null);
+    setDimensions(nextDimensions);
   };
 
   // Derived Data for Display
@@ -167,13 +226,25 @@ const AnalyticsDashboard = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(dimensions)
+        body: JSON.stringify({ ...dimensions, filters })
       });
 
       const result: APIResponse = await response.json();
 
       if (result.success) {
-        setOlapData(result.data);
+        // Enforce numeric types for measures to prevent chart inconsistencies
+        const measureKeys = Object.keys(MEASURE_LABELS);
+        const parsedData = result.data.map(rec => {
+          const newRec = { ...rec };
+          measureKeys.forEach(m => {
+            if (newRec[m] !== undefined && newRec[m] !== null) {
+              newRec[m] = Number(newRec[m]);
+            }
+          });
+          return newRec;
+        });
+
+        setOlapData(parsedData);
         setDimensionColumns(result.metadata.dimension_columns);
       } else {
         setError(result.error || 'Unknown error');
@@ -189,7 +260,7 @@ const AnalyticsDashboard = () => {
 
   useEffect(() => {
     fetchOLAPData();
-  }, [dimensions]);
+  }, [dimensions, filters]);
 
   const handleSort = (column: string) => {
     if (sortColumn === column) {
@@ -212,9 +283,9 @@ const AnalyticsDashboard = () => {
 
     switch (dimensionType) {
       case 'temp':
-        if (dimensions.temp === 'year') newDimensions.temp = 'year+month';
+        if (dimensions.temp === 'ALL') newDimensions.temp = 'year';
+        else if (dimensions.temp === 'year') newDimensions.temp = 'year+saison';
         else if (dimensions.temp === 'year+saison') newDimensions.temp = 'year+month';
-        else if (dimensions.temp === 'saison') newDimensions.temp = 'year+saison'; // Example inference
         break;
       case 'emp':
         if (dimensions.emp === 'DEPARTEMENT') newDimensions.emp = 'DEPARTEMENT+EMPLOYE';
@@ -319,7 +390,6 @@ const AnalyticsDashboard = () => {
   // Max value for progress bars
   const maxDelay = Math.max(...olapData.map(d => Number(d.moyenne_retard) || 0), 1);
 
-  // ... existing code ...
 
   // Decision Support State
   const [showInsights, setShowInsights] = useState(false);
@@ -362,12 +432,47 @@ const AnalyticsDashboard = () => {
     setViewMode('analytics');
   };
 
+  /* Custom Tooltip for Enhanced Context (Employee, Dept, etc.) */
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const rec = payload[0].payload;
+      return (
+        <div className={`p-3 rounded-xl border ${theme.border} ${isDarkMode ? 'bg-[#1e293b]' : 'bg-white'} shadow-2xl`}>
+          <p className={`text-[10px] font-black uppercase tracking-widest mb-2 ${theme.textSecondary} border-b border-slate-100 dark:border-slate-700 pb-1`}>
+            {label}
+          </p>
+          <div className="space-y-1 mb-2">
+            {dimensionColumns
+              .filter(col => col !== chartXAxis && col !== 'month' && col !== 'year' && rec[col])
+              .map(col => (
+                <div key={col} className="flex justify-between gap-4 text-xs">
+                  <span className={`font-semibold capitalize opacity-70 ${theme.text}`}>{col}:</span>
+                  <span className={`font-bold ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>{rec[col]}</span>
+                </div>
+              ))
+            }
+          </div>
+          <div className="space-y-1 pt-1 border-t border-slate-100 dark:border-slate-700">
+            {payload.map((p: any, idx: number) => (
+              <div key={idx} className="flex items-center gap-2 text-xs">
+                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }}></div>
+                <span className={`${theme.textSecondary} capitalize`}>{p.name}:</span>
+                <span className={`font-mono font-bold ${theme.text}`}>{Number(p.value).toFixed(1)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <div dir="ltr" className={`${isDarkMode ? 'dark' : ''} flex h-screen ${theme.bg} transition-colors duration-300 overflow-hidden font-sans antialiased text-slate-900 dark:text-slate-100`}>
 
       {/* Sidebar - RESTORED FOR NAVIGATION ONLY */}
       <aside className={`${theme.sidebarBg} border-r ${theme.border} transition-all duration-300 ${sidebarOpen ? 'w-64' : 'w-20'} flex flex-col shadow-xl z-20 shrink-0`}>
-        <div className="p-6 flex items-center gap-3 border-b border-slate-100 dark:border-slate-700/50 h-[73px]">
+        <div className="p-5 flex items-center gap-3 border-b border-slate-100 dark:border-slate-700/50 h-[60px]">
           <div className="p-2.5 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl shadow-[0_0_15px_rgba(37,99,235,0.4)] shrink-0">
             <Activity className="w-5 h-5 text-white" />
           </div>
@@ -378,7 +483,7 @@ const AnalyticsDashboard = () => {
 
         <div className="flex-1 overflow-y-auto py-6 px-4 space-y-2">
           <div className={`text-[10px] font-bold ${theme.textSecondary} uppercase tracking-[0.2em] mb-4 px-3`}>
-            {sidebarOpen ? 'Navigation' : '•••'}
+            {sidebarOpen ? 'Navigation' : '...'}
           </div>
 
           <button
@@ -399,7 +504,7 @@ const AnalyticsDashboard = () => {
 
           {/* Decision Support Shortcuts */}
           <div className={`mt-6 text-[10px] font-bold ${theme.textSecondary} uppercase tracking-[0.2em] mb-2 px-3`}>
-            {sidebarOpen ? 'Quick Analysis' : '•••'}
+            {sidebarOpen ? 'Quick Analysis' : '...'}
           </div>
           <button
             onClick={() => runQuickAnalysis('employee_performance')}
@@ -428,7 +533,7 @@ const AnalyticsDashboard = () => {
       <div className="flex-1 flex flex-col h-full overflow-hidden">
 
         {/* Navbar */}
-        <header className={`${theme.cardBg} border-b ${theme.border} h-[73px] flex items-center justify-between px-8 shadow-sm z-10 shrink-0`}>
+        <header className={`${theme.cardBg} border-b ${theme.border} h-[60px] flex items-center justify-between px-6 shadow-sm z-10 shrink-0`}>
           <div className="flex flex-col justify-center">
             <h1 className={`text-lg font-extrabold ${theme.text} tracking-tight leading-tight`}>
               {viewMode === 'analytics' ? 'Operational Intelligence' : 'Data Explorer'}
@@ -444,9 +549,27 @@ const AnalyticsDashboard = () => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
               <input
                 type="text"
-                placeholder="Search..."
+                placeholder="Search dimensions & measures..."
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setCurrentPage(1);
+                }}
                 className={`pl-10 pr-4 py-2 rounded-full border ${theme.border} ${theme.input} text-xs font-medium w-64 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all`}
               />
+              {searchTerm && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                  <span className="text-[10px] font-bold bg-blue-500 text-white px-1.5 py-0.5 rounded-full shadow-sm animate-in fade-in scale-in-95">
+                    {totalRows}
+                  </span>
+                  <button
+                    onClick={() => { setSearchTerm(''); setCurrentPage(1); }}
+                    className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"
+                  >
+                    <X className="w-3 h-3 text-slate-400" />
+                  </button>
+                </div>
+              )}
             </div>
             <div className="h-6 w-px bg-slate-200 dark:bg-slate-700"></div>
             <button
@@ -464,7 +587,7 @@ const AnalyticsDashboard = () => {
           {/* Analysis Context Toolbar (Dimensions) - STICKY & COLLAPSIBLE */}
           <div className={`sticky top-0 z-[100] ${theme.glass} border-b ${theme.border} backdrop-blur-xl transition-all duration-300 ${filterPanelCollapsed ? 'h-12' : 'h-auto'}`}>
             {/* Collapse/Expand Button */}
-            <div className="flex items-center justify-between px-6 lg:px-10 py-2">
+            <div className="flex items-center justify-between px-6 lg:px-10 py-1">
               <div className="flex items-center gap-2">
                 <Filter className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                 <span className="text-[10px] font-black uppercase tracking-widest text-blue-700 dark:text-blue-300">Filters</span>
@@ -485,52 +608,106 @@ const AnalyticsDashboard = () => {
 
             {/* Filter Content */}
             <div className={`transition-all duration-300 ${filterPanelCollapsed ? 'opacity-0 h-0' : 'opacity-100 h-auto'}`}>
-              <div className="flex flex-col lg:flex-row items-center gap-4 px-6 lg:px-10 pb-4">
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 w-full relative">
+              <div className="flex flex-col lg:flex-row items-center gap-4 px-6 lg:px-10 pb-1">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 w-full relative">
                   {/* Backdrop for closing dropdowns */}
                   {openDropdown && (
                     <div className="fixed inset-0 z-[60]" onClick={() => setOpenDropdown(null)}></div>
                   )}
                   {[
-                    { key: 'temp', val: dimensions.temp, set: (v: any) => setDimensions({ ...dimensions, temp: v }), opts: [['ALL', 'All Time'], ['year', 'Year'], ['saison', 'Season'], ['month', 'Month'], ['year+saison', 'Year & Season'], ['year+month', 'Year & Month']], label: 'Time', icon: Calendar },
-                    { key: 'emp', val: dimensions.emp, set: (v: any) => setDimensions({ ...dimensions, emp: v }), opts: [['ALL', 'All Staff'], ['EMPLOYE', 'Employee'], ['DEPARTEMENT', 'Department'], ['DEPARTEMENT+EMPLOYE', 'Dept & Emp']], label: 'Staff', icon: User },
-                    { key: 'prod', val: dimensions.prod, set: (v: any) => setDimensions({ ...dimensions, prod: v }), opts: [['ALL', 'All Products'], ['produit', 'Product'], ['categorie', 'Category'], ['fournisseur', 'Supplier'], ['categorie+produit', 'Cat & Prod']], label: 'Product', icon: Box },
-                    { key: 'clie', val: dimensions.clie, set: (v: any) => setDimensions({ ...dimensions, clie: v }), opts: [['ALL', 'All Clients'], ['client', 'Client'], ['pays', 'Country'], ['pays+client', 'Country & Client']], label: 'Client', icon: MapPin }
-                  ].map((dim, idx) => (
-                    <div key={idx} className="relative group z-[70]">
-                      <div className={`absolute -inset-0.5 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full opacity-0 group-hover:opacity-30 transition duration-500 blur-sm`}></div>
-                      <div className="relative">
-                        <button
-                          onClick={() => setOpenDropdown(openDropdown === dim.key ? null : dim.key)}
-                          className={`w-full flex items-center justify-between ${isDarkMode ? 'bg-[#1e293b] text-white border-slate-600' : 'bg-white text-slate-800 border-slate-200'} border rounded-full pl-10 pr-4 py-3 text-xs font-bold transition-all shadow-sm hover:shadow-md outline-none hover:scale-[1.02] active:scale-[0.98]`}
-                        >
-                          <span className="truncate">{dim.opts.find(o => o[0] === dim.val)?.[1] || dim.val}</span>
-                          <ChevronDown className={`w-3 h-3 transition-transform duration-300 ${openDropdown === dim.key ? 'rotate-180' : ''} ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`} />
-                        </button>
+                    { key: 'temp', val: dimensions.temp, set: (v: any) => updateDimension('temp', v), opts: [['ALL', 'All Time'], ['year', 'Year'], ['year+saison', 'Season & Year'], ['year+month', 'Month & Year (Season)'], ['DIVIDER', ''], ['saison', 'Season'], ['month', 'Month']], label: 'Time', icon: Calendar },
+                    { key: 'emp', val: dimensions.emp, set: (v: any) => updateDimension('emp', v), opts: [['ALL', 'All Staff'], ['EMPLOYE', 'Employee'], ['DEPARTEMENT', 'Department'], ['DEPARTEMENT+EMPLOYE', 'Dept & Emp']], label: 'Staff', icon: User },
+                    { key: 'prod', val: dimensions.prod, set: (v: any) => updateDimension('prod', v), opts: [['ALL', 'All Products'], ['produit', 'Product'], ['categorie', 'Category'], ['fournisseur', 'Supplier'], ['categorie+produit', 'Cat & Prod']], label: 'Product', icon: Box },
+                    { key: 'clie', val: dimensions.clie, set: (v: any) => updateDimension('clie', v), opts: [['ALL', 'All Clients'], ['client', 'Client'], ['pays', 'Country'], ['pays+client', 'Country & Client']], label: 'Client', icon: MapPin }
+                  ].map((dim, idx) => {
+                    const hierarchy = HIERARCHIES[dim.key];
+                    const currentIndex = hierarchy ? hierarchy.indexOf(dim.val) : -1;
+                    const canDrill = hierarchy && currentIndex !== -1 && currentIndex < hierarchy.length - 1;
+                    const canRoll = hierarchy && currentIndex !== -1 && currentIndex > 0;
 
-                        <dim.icon className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-blue-400' : 'text-blue-500'} pointer-events-none`} />
-                        <span className={`absolute -top-2.5 left-4 px-2 text-[9px] font-extrabold uppercase tracking-wider ${isDarkMode ? 'bg-[#1e293b] text-blue-300' : 'bg-white text-blue-600'} rounded-full shadow-sm border ${isDarkMode ? 'border-slate-600' : 'border-slate-100'} scale-90`}>{dim.label}</span>
+                    return (
+                      <div key={idx} className="relative group z-[70]">
+                        <div className={`absolute -inset-1 bg-gradient-to-r ${isDarkMode ? 'from-blue-500/10 to-indigo-500/10' : 'from-blue-100 to-indigo-100'} rounded-xl opacity-0 group-hover:opacity-100 transition duration-500 blur-[2px]`}></div>
+                        <div className="relative flex flex-col items-center">
+                          {/* Mini Label */}
+                          <div className="w-full px-1.5 flex justify-between items-center mb-0.5">
+                            <span className={`text-[7px] font-black uppercase tracking-tighter ${isDarkMode ? 'text-blue-400/60' : 'text-blue-600/60'}`}>{dim.label}</span>
+                          </div>
 
-                        {/* Custom Dropdown Menu */}
-                        {openDropdown === dim.key && (
-                          <div className={`absolute top-full left-0 mt-2 w-full min-w-[200px] rounded-2xl border ${theme.border} ${isDarkMode ? 'bg-[#0f172a]/95' : 'bg-white/95'} backdrop-blur-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 z-[110]`}>
-                            <div className="max-h-[260px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-400 dark:scrollbar-thumb-slate-600 scrollbar-track-transparent p-2">
-                              {dim.opts.map(([k, v]) => (
+                          <div className="relative w-full">
+                            <button
+                              onClick={() => setOpenDropdown(openDropdown === dim.key ? null : dim.key)}
+                              className={`w-full flex items-center justify-between ${isDarkMode ? 'bg-[#1e293b] text-white border-slate-600' : 'bg-white text-slate-800 border-slate-200'} border rounded-lg pl-7 pr-2 py-1 text-[10px] font-bold transition-all shadow-sm hover:shadow-md outline-none hover:scale-[1.01] active:scale-[0.99]`}
+                            >
+                              <span className="truncate">{dim.opts.find(o => o[0] === dim.val)?.[1] || dim.val}</span>
+                              <ChevronDown className={`w-2.5 h-2.5 transition-transform duration-300 ${openDropdown === dim.key ? 'rotate-180' : ''} opacity-40`} />
+                            </button>
+                            <dim.icon className={`w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 ${isDarkMode ? 'text-blue-400' : 'text-blue-500'} pointer-events-none`} />
+
+                            {/* Custom Dropdown Menu */}
+                            {openDropdown === dim.key && (
+                              <div className={`absolute top-full left-0 mt-1 w-full min-w-[180px] rounded-xl border ${theme.border} ${isDarkMode ? 'bg-[#0f172a]/95' : 'bg-white/95'} backdrop-blur-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-1 z-[110]`}>
+                                <div className="max-h-[220px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-400 dark:scrollbar-thumb-slate-600 scrollbar-track-transparent p-1">
+                                  {dim.opts.map(([k, v]) => (
+                                    k === 'DIVIDER' ? (
+                                      <div key={k} className="my-1 border-t-2 border-slate-200 dark:border-slate-600"></div>
+                                    ) : (
+                                      <button
+                                        key={k}
+                                        onClick={() => { dim.set(k); setOpenDropdown(null); }}
+                                        className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all mb-0.5 last:mb-0 ${dim.val === k ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white' : `${theme.text} hover:bg-slate-100 dark:hover:bg-slate-800`}`}
+                                      >
+                                        <span>{v}</span>
+                                        {dim.val === k && <span className="text-white font-bold select-none">✓</span>}
+                                      </button>
+                                    )
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Hierarchy Controls UNDERNEATH (High Visibility Frame) */}
+                          <div className="flex items-center justify-center w-full mt-1.5">
+                            <div className={`flex items-center gap-4 p-0.5 px-3 rounded-full border-2 transition-all duration-300 ${isDarkMode ? 'bg-blue-900/30 border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.2)]' : 'bg-blue-100 border-blue-200 shadow-[0_0_15px_rgba(59,130,246,0.15)]'}`}>
+                              <button
+                                onClick={() => handleHierarchyNav(dim.key, 'up')}
+                                disabled={!canRoll}
+                                className={`p-1 rounded-full transition-all ${canRoll ? 'text-blue-500 hover:bg-white dark:hover:bg-slate-700' : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'}`}
+                                title="Roll-up"
+                              >
+                                <ChevronUp className="w-2.5 h-2.5" />
+                              </button>
+                              <button
+                                onClick={() => handleHierarchyNav(dim.key, 'down')}
+                                disabled={!canDrill}
+                                className={`p-1 rounded-full transition-all ${canDrill ? 'text-blue-500 hover:bg-white dark:hover:bg-slate-700' : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'}`}
+                                title="Drill-down"
+                              >
+                                <ChevronDown className="w-2.5 h-2.5" />
+                              </button>
+                              {dim.val !== 'ALL' && (
                                 <button
-                                  key={k}
-                                  onClick={() => { dim.set(k); setOpenDropdown(null); }}
-                                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all mb-1 last:mb-0 ${dim.val === k ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/30' : `${theme.text} hover:bg-slate-100 dark:hover:bg-slate-800`}`}
+                                  onClick={(e) => {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const colTargetCandidate = dim.val.includes('+') ? dim.val.split('+').pop()! : dim.val;
+                                    const dataKeys = olapData.length > 0 ? Object.keys(olapData[0]) : dimensionColumns;
+                                    const colTarget = resolveColumn(colTargetCandidate, dataKeys);
+
+                                    setShowSlicer({ col: colTarget, x: rect.left, y: rect.bottom });
+                                  }}
+                                  className={`p-1 rounded-full transition-all ${filters[dim.val.includes('+') ? dim.val.split('+').pop()! : dim.val] ? 'text-white bg-emerald-500 shadow-sm' : 'text-blue-500 hover:bg-white dark:hover:bg-slate-700'}`}
+                                  title="Filter (Slice)"
                                 >
-                                  <span>{v}</span>
-                                  {dim.val === k && <span className="text-white font-bold select-none">✓</span>}
+                                  <Filter className="w-2.5 h-2.5" />
                                 </button>
-                              ))}
+                              )}
                             </div>
                           </div>
-                        )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <div className="flex items-center gap-2 border-l border-slate-200 dark:border-slate-700 pl-4 lg:ml-2">
@@ -540,28 +717,10 @@ const AnalyticsDashboard = () => {
               </div>
 
               {/* Active Filter Chips Display */}
-              {(Object.values(dimensions).some(d => d !== 'ALL') || drillPath.length > 0) && (
-                <div className={`px-4 py-2 ${isDarkMode ? 'bg-slate-800/30' : 'bg-slate-50'} border-t ${theme.border} flex items-center gap-3 overflow-x-auto rounded-b-2xl`}>
-                  {drillPath.length > 0 && (
-                    <div className="flex items-center gap-1.5 mr-4 border-r pr-4 border-slate-200 dark:border-slate-700">
-                      <span className="text-[9px] font-bold uppercase text-slate-400">Path:</span>
-                      {drillPath.map((step, i) => (
-                        <span key={i} className="text-[10px] font-bold bg-white dark:bg-slate-700 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 shadow-sm">{step.label}</span>
-                      ))}
-                      <ChevronRight className="w-3 h-3 text-slate-400" />
-                    </div>
-                  )}
-                  {Object.entries(dimensions).filter(([k, v]) => v !== 'ALL' && k !== 'temp').map(([k, v]) => (
-                    <div key={k} className="flex items-center gap-1 px-2 py-1 rounded bg-slate-900 dark:bg-blue-600 text-white text-[10px] font-bold uppercase shadow-md">
-                      <span>{k}: {v}</span>
-                      <button onClick={() => setDimensions({ ...dimensions, [k]: 'ALL' })} className="hover:text-rose-300"><X className="w-3 h-3" /></button>
-                    </div>
-                  ))}
-                </div>
-              )}
+
             </div>
           </div>
-          <div className="p-6 lg:p-10 space-y-8">
+          <div className="p-3 lg:p-5 space-y-5">
             {error && (
               <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-600 p-4 rounded-xl flex items-center gap-3 animate-in slide-in-from-top-2">
                 <AlertCircle className="w-5 h-5 flex-shrink-0" />
@@ -615,10 +774,24 @@ const AnalyticsDashboard = () => {
                     {getExtremeRecords('total_retard', 'min').map((rec, i) => (
                       <div key={i} className={`flex flex-col p-4 rounded-xl ${isDarkMode ? 'bg-slate-800/80 hover:bg-slate-800' : 'bg-white/60 hover:bg-white/80'} backdrop-blur-sm border ${isDarkMode ? 'border-slate-700/50' : 'border-emerald-50'} hover:border-emerald-300 transition-all duration-300 shadow-sm hover:shadow-md cursor-default`}>
                         <div className="flex justify-between items-center mb-1.5">
-                          <span className={`text-sm font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>{rec[dimensionColumns.find(c => c !== 'month' && c !== 'year') || dimensionColumns[0]] || 'Unknown'}</span>
-                          <span className={`text-sm font-mono font-extrabold ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>{rec.total_retard}d</span>
+                          <span className={`text-sm font-bold ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>Success</span>
+                          <span className={`text-sm font-mono font-extrabold ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>{Number(rec.total_retard).toFixed(1)}d</span>
                         </div>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-300 leading-relaxed font-medium">{generateInsightText(rec, 'good')}</p>
+
+                        {/* Detailed Context for Insights */}
+                        <div className="space-y-1 mb-2">
+                          {dimensionColumns
+                            .filter(col => col !== 'month' && col !== 'year' && rec[col]) // Show all identifying columns
+                            .map(col => (
+                              <div key={col} className="flex justify-between gap-4 text-xs border-b border-dashed border-slate-100 dark:border-slate-700/50 pb-0.5 last:border-0">
+                                <span className={`font-semibold capitalize opacity-70 ${theme.text}`}>{col}:</span>
+                                <span className={`font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{rec[col]}</span>
+                              </div>
+                            ))
+                          }
+                        </div>
+
+                        <p className="text-[10px] text-slate-500 dark:text-slate-300 leading-relaxed font-medium mt-1">{generateInsightText(rec, 'good')}</p>
                       </div>
                     ))}
                   </div>
@@ -642,10 +815,24 @@ const AnalyticsDashboard = () => {
                     {getExtremeRecords('total_retard', 'max').map((rec, i) => (
                       <div key={i} className={`flex flex-col p-4 rounded-xl ${isDarkMode ? 'bg-slate-800/80 hover:bg-slate-800' : 'bg-white/60 hover:bg-white/80'} backdrop-blur-sm border-l-[3px] border-l-rose-500 border-y border-r border-slate-100 dark:border-slate-700/50 hover:border-r-rose-200 transition-all duration-300 shadow-sm hover:shadow-md cursor-default`}>
                         <div className="flex justify-between items-center mb-1.5">
-                          <span className={`text-sm font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>{rec[dimensionColumns.find(c => c !== 'month' && c !== 'year') || dimensionColumns[0]] || 'Unknown'}</span>
-                          <span className={`text-sm font-mono font-extrabold ${isDarkMode ? 'text-rose-400' : 'text-rose-600'}`}>{rec.total_retard}d</span>
+                          <span className={`text-sm font-bold ${isDarkMode ? 'text-rose-400' : 'text-rose-600'}`}>Critical</span>
+                          <span className={`text-sm font-mono font-extrabold ${isDarkMode ? 'text-rose-400' : 'text-rose-600'}`}>{Number(rec.total_retard).toFixed(1)}d</span>
                         </div>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-300 leading-relaxed font-medium">{generateInsightText(rec, 'bad')}</p>
+
+                        {/* Detailed Context for Insights */}
+                        <div className="space-y-1 mb-2">
+                          {dimensionColumns
+                            .filter(col => col !== 'month' && col !== 'year' && rec[col]) // Show all identifying columns
+                            .map(col => (
+                              <div key={col} className="flex justify-between gap-4 text-xs border-b border-dashed border-slate-100 dark:border-slate-700/50 pb-0.5 last:border-0">
+                                <span className={`font-semibold capitalize opacity-70 ${theme.text}`}>{col}:</span>
+                                <span className={`font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{rec[col]}</span>
+                              </div>
+                            ))
+                          }
+                        </div>
+
+                        <p className="text-[10px] text-slate-500 dark:text-slate-300 leading-relaxed font-medium mt-1">{generateInsightText(rec, 'bad')}</p>
                       </div>
                     ))}
                   </div>
@@ -685,8 +872,43 @@ const AnalyticsDashboard = () => {
                 </div>
 
                 {/* Planned vs Real Duration Comparison */}
-                <div className={`w-full ${theme.cardBg} border ${theme.border} rounded-2xl p-5 shadow-sm`}>
-                  <h3 className={`text-xs font-bold uppercase tracking-widest ${theme.textSecondary} mb-4`}>Planned vs. Real Duration</h3>
+                <div
+                  className={`w-full ${theme.cardBg} border ${theme.border} rounded-2xl p-5 shadow-sm relative group`}
+                  onMouseEnter={() => setHoveredChart('planned-vs-real')}
+                  onMouseLeave={() => setHoveredChart(null)}
+                >
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className={`text-xs font-bold uppercase tracking-widest ${theme.textSecondary}`}>Planned vs. Real Duration</h3>
+
+                    {/* Power BI Chart Toolbar */}
+                    <div className={`flex items-center gap-2 transition-opacity duration-300 ${hoveredChart === 'planned-vs-real' ? 'opacity-100' : 'opacity-0'}`}>
+                      <button
+                        onClick={() => handleHierarchyNav(COLUMN_TO_DIMENSION[chartXAxis] || 'temp', 'up')}
+                        className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 transition-all"
+                        title="Roll-up"
+                      >
+                        <ArrowUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleHierarchyNav(COLUMN_TO_DIMENSION[chartXAxis] || 'temp', 'down')}
+                        className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 transition-all"
+                        title="Drill-down"
+                      >
+                        <ArrowDown className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setShowSlicer({ col: chartXAxis, x: rect.left, y: rect.bottom });
+                        }}
+                        className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 transition-all"
+                        title="Filter (Slice)"
+                      >
+                        <Filter className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="h-[250px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={olapData.slice(0, 30)} margin={{ top: 10, right: 10, left: 40, bottom: 40 }}>
@@ -703,9 +925,11 @@ const AnalyticsDashboard = () => {
                           fontSize={10}
                           label={{ value: 'Duration (Days)', angle: -90, position: 'insideLeft', offset: -30, fontSize: 10, fontWeight: '800', fill: isDarkMode ? '#94a3b8' : '#1e293b', opacity: 0.5 }}
                         />
+
+
                         <Tooltip
+                          content={<CustomTooltip />}
                           cursor={{ fill: isDarkMode ? '#334155' : '#f8fafc' }}
-                          contentStyle={{ borderRadius: '12px', border: 'none', backgroundColor: isDarkMode ? '#1e293b' : '#fff', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                         />
                         <Legend wrapperStyle={{ paddingTop: '20px' }} />
                         <Bar dataKey="moy_prevue" name="Planned Duration" fill="#4f46e5" radius={[4, 4, 0, 0]} />
@@ -716,10 +940,50 @@ const AnalyticsDashboard = () => {
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[400px]">
-                  <div className={`lg:col-span-2 ${theme.cardBg} border ${theme.border} rounded-2xl p-5 shadow-sm`}>
-                    <h3 className={`text-xs font-bold uppercase tracking-widest ${theme.textSecondary} mb-4`}>Main Analysis</h3>
+                  <div
+                    className={`lg:col-span-2 ${theme.cardBg} border ${theme.border} rounded-2xl p-5 shadow-sm relative group`}
+                    onMouseEnter={() => setHoveredChart('main-analysis')}
+                    onMouseLeave={() => setHoveredChart(null)}
+                  >
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className={`text-xs font-bold uppercase tracking-widest ${theme.textSecondary}`}>Main Analysis</h3>
+
+                      {/* Power BI Chart Toolbar */}
+                      <div className={`flex items-center gap-2 transition-opacity duration-300 ${hoveredChart === 'main-analysis' ? 'opacity-100' : 'opacity-0'}`}>
+                        <button
+                          onClick={() => handleHierarchyNav(COLUMN_TO_DIMENSION[chartXAxis] || 'temp', 'up')}
+                          className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 transition-all"
+                          title="Roll-up"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleHierarchyNav(COLUMN_TO_DIMENSION[chartXAxis] || 'temp', 'down')}
+                          className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 transition-all"
+                          title="Drill-down"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setShowSlicer({ col: chartXAxis, x: rect.left, y: rect.bottom });
+                          }}
+                          className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 transition-all"
+                          title="Filter (Slice)"
+                        >
+                          <Filter className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
                     <ResponsiveContainer width="100%" height="90%">
-                      <BarChart data={olapData.slice(0, 25)} onClick={(s) => s?.activePayload && handleDrillDown(s.activePayload[0].payload, 'temp')} style={{ cursor: 'pointer' }} margin={{ top: 10, right: 10, left: 40, bottom: 40 }}>
+                      <BarChart
+                        data={olapData.slice(0, 25)}
+                        onClick={(s: any) => s?.activePayload && handleDrillDown(s.activePayload[0].payload, (COLUMN_TO_DIMENSION[chartXAxis] || 'temp') as any)}
+                        style={{ cursor: 'pointer' }}
+                        margin={{ top: 10, right: 10, left: 40, bottom: 40 }}
+                      >
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#334155' : '#f1f5f9'} />
                         <XAxis
                           dataKey={chartXAxis || dimensionColumns[0]}
@@ -733,7 +997,7 @@ const AnalyticsDashboard = () => {
                           fontSize={10}
                           label={{ value: MEASURE_LABELS[selectedMeasure], angle: -90, position: 'insideLeft', offset: -30, fontSize: 10, fontWeight: '800', fill: isDarkMode ? '#94a3b8' : '#1e293b', opacity: 0.5 }}
                         />
-                        <Tooltip cursor={{ fill: isDarkMode ? '#334155' : '#f8fafc' }} contentStyle={{ borderRadius: '12px', borderColor: 'transparent', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }} />
+                        <Tooltip content={<CustomTooltip />} cursor={{ fill: isDarkMode ? '#334155' : '#f8fafc' }} />
                         <Bar dataKey={selectedMeasure} fill="#3b82f6" radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
@@ -747,7 +1011,7 @@ const AnalyticsDashboard = () => {
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#334155' : '#f1f5f9'} />
                         <XAxis hide />
-                        <Tooltip contentStyle={{ borderRadius: '12px', border: 'none' }} />
+                        <Tooltip content={<CustomTooltip />} />
                         <Area type="monotone" dataKey="moy_reelle" stroke="#8b5cf6" fill="url(#colorR)" />
                         <Area type="monotone" dataKey="moy_prevue" stroke="#10b981" fill="transparent" strokeDasharray="5 5" />
                       </AreaChart>
@@ -759,52 +1023,134 @@ const AnalyticsDashboard = () => {
 
             {/* Data Table Section - ONLY IN RAW MODE */}
             {viewMode === 'raw' && (
-              <div className={`mt-8 ${theme.cardBg} border ${theme.border} rounded-2xl shadow-sm overflow-hidden min-h-[500px] flex flex-col`}>
-                <div className="p-5 border-b border-slate-100 dark:border-slate-700/50 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-500/10 rounded-lg"><Layers className="w-4 h-4 text-blue-600" /></div>
+              <div className={`transition-all duration-500 ${isTableFullscreen ? 'fixed inset-0 z-[200] bg-white dark:bg-[#0f172a] overflow-hidden flex flex-col' : `mt-3 ${theme.cardBg} border ${theme.border} rounded-2xl shadow-sm overflow-hidden h-[calc(100vh-250px)] lg:h-[600px] flex flex-col relative`}`}>
+                <div className={`p-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between ${isTableFullscreen ? 'bg-white dark:bg-[#0f172a] sticky top-0 z-[210]' : ''}`}>
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-blue-500/10 rounded-lg"><Layers className="w-3.5 h-3.5 text-blue-600" /></div>
                     <div>
-                      <h3 className={`font-bold text-sm ${theme.text}`}>Detailed Records</h3>
-                      <p className={`text-[10px] ${theme.textSecondary} flex items-center gap-1`}>
-                        {olapData.filter(item => !searchTerm || Object.values(item).some(val => String(val).toLowerCase().includes(searchTerm.toLowerCase()))).length} records found
-                        {(searchTerm || sortColumn) && <span className="text-blue-500">(Filtered/Sorted)</span>}
+                      <h3 className={`font-bold text-xs ${isTableFullscreen ? 'dark:text-white text-lg' : theme.text}`}>Detailed Records</h3>
+                      <p className={`text-[9px] ${theme.textSecondary} flex items-center gap-1`}>
+                        {totalRows} records
+                        {(searchTerm || sortColumn) && <span className="text-blue-500">(Filtered)</span>}
                       </p>
                     </div>
                   </div>
-                  <button onClick={handleExport} className="text-[11px] font-bold uppercase tracking-widest text-blue-600 hover:bg-blue-50 px-4 py-2 rounded-xl transition-colors">Export CSV</button>
+
+                  {isTableFullscreen && (
+                    <div className="hidden lg:flex items-center gap-2 flex-1 px-4 border-x border-slate-100 dark:border-slate-800 mx-4 justify-center">
+                      {Object.entries({ temp: dimensions.temp, emp: dimensions.emp, prod: dimensions.prod, clie: dimensions.clie }).map(([key, val]) => {
+                        const hierarchy = HIERARCHIES[key];
+                        const currentIndex = hierarchy ? hierarchy.indexOf(val) : -1;
+                        const canDrill = hierarchy && currentIndex < hierarchy.length - 1;
+                        const canRoll = hierarchy && currentIndex > 0;
+                        return (
+                          <div key={key} className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/40 px-2 py-1 rounded-full border border-slate-200 dark:border-slate-800 h-8 shrink-0 hover:border-blue-400 transition-colors">
+                            <span className="text-[9px] font-black uppercase text-blue-600 dark:text-blue-400 px-1 border-r border-slate-200 dark:border-slate-700 mr-1">{key}</span>
+                            <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 max-w-[60px] truncate">{val}</span>
+                            <div className="flex items-center gap-0.5 ml-1 border-l border-slate-200 dark:border-slate-700 pl-1">
+                              <button onClick={() => handleHierarchyNav(key, 'up')} disabled={!canRoll} className={`p-1 rounded-full transition-all ${canRoll ? 'text-blue-500 hover:bg-white dark:hover:bg-slate-700' : 'text-slate-300 cursor-not-allowed'}`}><ChevronUp className="w-2.5 h-2.5" /></button>
+                              <button onClick={() => handleHierarchyNav(key, 'down')} disabled={!canDrill} className={`p-1 rounded-full transition-all ${canDrill ? 'text-blue-500 hover:bg-white dark:hover:bg-slate-700' : 'text-slate-300 cursor-not-allowed'}`}><ChevronDown className="w-2.5 h-2.5" /></button>
+                              <button
+                                onClick={(e) => {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const colTargetCandidate = val.includes('+') ? val.split('+').pop()! : val;
+                                  const dataKeys = olapData.length > 0 ? Object.keys(olapData[0]) : dimensionColumns;
+                                  // Special handling for ALL - fallback to known hierarchy defaults
+                                  let colToResolve = colTargetCandidate;
+                                  if (colTargetCandidate === 'ALL') {
+                                    if (key === 'temp') colToResolve = 'year';
+                                    else if (key === 'emp') colToResolve = 'DEPARTEMENT';
+                                    else if (key === 'prod') colToResolve = 'categorie';
+                                    else if (key === 'clie') colToResolve = 'pays';
+                                  }
+
+                                  const colTarget = resolveColumn(colToResolve, dataKeys);
+                                  setShowSlicer({ col: colTarget, x: rect.left, y: rect.bottom });
+                                }}
+                                className={`p-1 rounded-full transition-all ${filters[val.includes('+') ? val.split('+').pop()! : val] ? 'text-white bg-emerald-500' : 'text-blue-500 hover:bg-white dark:hover:bg-slate-700'}`}
+                              >
+                                <Filter className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-3">
+                    {/* Secondary Search (Fullscreen only) */}
+                    {isTableFullscreen && (
+                      <div className="relative group mr-4">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+                        <input
+                          type="text"
+                          placeholder="Search records..."
+                          value={searchTerm}
+                          onChange={(e) => {
+                            setSearchTerm(e.target.value);
+                            setCurrentPage(1);
+                          }}
+                          className={`pl-9 pr-8 py-1.5 rounded-full border ${theme.border} ${theme.input} text-[11px] font-medium w-48 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all shadow-sm`}
+                        />
+                        {searchTerm && (
+                          <button
+                            onClick={() => { setSearchTerm(''); setCurrentPage(1); }}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"
+                          >
+                            <X className="w-3 h-3 text-slate-400" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setIsTableFullscreen(!isTableFullscreen)}
+                      className={`p-1.5 rounded-lg border transition-all active:scale-90 ${isDarkMode ? 'bg-blue-600 text-white border-blue-500 hover:bg-blue-500' : 'bg-white text-slate-900 border-slate-200 hover:bg-slate-100'}`}
+                      title={isTableFullscreen ? "Minimize" : "Maximize"}
+                    >
+                      {isTableFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                    </button>
+                    {!isTableFullscreen && (
+                      <button onClick={handleExport} className="text-[10px] font-black uppercase tracking-tighter text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors border border-blue-100 dark:border-blue-900/40">Export CSV</button>
+                    )}
+
+                  </div>
                 </div>
 
                 <div
-                  className="flex-1 overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm relative min-h-[400px]"
+                  className={`flex-1 overflow-auto ${isTableFullscreen ? '' : 'rounded-2xl'} border border-slate-200 dark:border-slate-700 shadow-sm relative`}
+                  style={{ height: isTableFullscreen ? 'calc(100vh - 120px)' : '500px' }}
                 >
                   {loading && (
-                    <div className="absolute inset-0 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm z-20 flex items-center justify-center rounded-2xl transition-all duration-300">
+                    <div className="absolute inset-0 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm z-40 flex items-center justify-center transition-all duration-300">
                       <div className="flex flex-col items-center gap-3">
                         <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
                         <span className="text-sm font-bold text-slate-600 dark:text-slate-300">Synchronizing Data...</span>
                       </div>
                     </div>
                   )}
-                  <table className="w-full text-center text-sm whitespace-nowrap">
-                    <thead className={`${isDarkMode ? 'bg-slate-800/80' : 'bg-gray-50/80'} ${theme.textSecondary} backdrop-blur-sm sticky top-0 z-30`}>
+                  <table className="w-full text-center text-[11px] border-separate border-spacing-0">
+                    <thead className={`${isDarkMode ? 'bg-[#1e293b]' : 'bg-slate-50'} ${theme.textSecondary} shadow-sm`}>
                       <tr>
                         {/* Individual Dimension Headers */}
                         {dimensionColumns.map((col) => (
                           <th
                             key={col}
                             className={`
-                              px-4 py-3 font-bold text-[11px] uppercase tracking-wider text-center cursor-pointer transition-all 
+                              px-2 py-2 text-[10px] whitespace-nowrap font-bold uppercase tracking-wider text-center cursor-pointer transition-all 
                               border-r border-b-2 border-slate-200 dark:border-slate-700/60
-                              ${isDarkMode ? 'bg-slate-800/90 text-blue-300' : 'bg-slate-50/80 text-blue-700'}
+                              ${isDarkMode ? 'bg-[#1e293b] text-blue-300' : 'bg-slate-50 text-blue-700'}
                               hover:bg-slate-100 dark:hover:bg-slate-700
                               ${sortColumn === col ? (isDarkMode ? 'bg-blue-900/30' : 'bg-blue-50') : ''}
-                              min-w-[150px]
+                              sticky top-0 z-30
                             `}
                             onClick={() => handleSort(col)}
                           >
                             <div className="flex items-center justify-center gap-1.5">
                               <span>{getDimensionLabel(col)}</span>
-                              {sortColumn === col && (sortDirection === 'asc' ? '↑' : '↓')}
+                              {sortColumn === col && (
+                                <span className="text-[8px]">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                              )}
                             </div>
                           </th>
                         ))}
@@ -814,18 +1160,23 @@ const AnalyticsDashboard = () => {
                           <th
                             key={m}
                             className={`
-                              px-4 py-3 font-bold text-[11px] uppercase tracking-wider text-center cursor-pointer transition-all 
+                              px-2 py-2 text-[10px] whitespace-nowrap font-bold uppercase tracking-wider text-center cursor-pointer transition-all 
                               border-r border-b-2 border-slate-200 dark:border-slate-700/60
-                              ${theme.text} hover:bg-slate-100 dark:hover:bg-slate-700
+                              ${isDarkMode ? 'bg-[#1e293b] text-slate-100' : 'bg-slate-50 text-slate-800'}
+                              hover:bg-slate-100 dark:hover:bg-slate-700
                               ${sortColumn === m ? (isDarkMode ? 'bg-emerald-900/40' : 'bg-emerald-100/50') : ''}
-                              min-w-[100px]
+                              sticky top-0 z-30
                             `}
                             onClick={() => handleSort(m)}
                           >
-                            {MEASURE_LABELS[m]} {sortColumn === m && (sortDirection === 'asc' ? '↑' : '↓')}
+                            <div className="flex items-center justify-center gap-1">
+                              {MEASURE_LABELS[m]}
+                              {sortColumn === m && (
+                                <span className="text-[8px]">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                              )}
+                            </div>
                           </th>
                         ))}
-                        <th className={`px-4 py-3 border-b-2 border-slate-200 dark:border-slate-700/60 font-bold text-[10px] uppercase tracking-widest text-center ${theme.text}`}>Actions</th>
                       </tr>
                     </thead>
                     <tbody className={`divide-y divide-slate-100 dark:divide-slate-700/50 transition-all duration-300 ${loading ? 'opacity-40 grayscale-[0.5]' : 'opacity-100'}`}>
@@ -836,7 +1187,7 @@ const AnalyticsDashboard = () => {
                           onMouseLeave={() => setHoveredRow(null)}
                           className={`
                             group transition-all duration-300 border-b border-slate-100 dark:border-slate-800/40
-                            ${isDarkMode ? 'hover:bg-slate-800/80 even:bg-slate-800/20' : 'hover:bg-blue-50/50 even:bg-slate-50/30'}
+                            ${isDarkMode ? 'bg-[#0f172a] hover:bg-[#1e293b]' : 'hover:bg-blue-50/50 even:bg-slate-50/30'}
                             relative
                           `}
                         >
@@ -845,11 +1196,10 @@ const AnalyticsDashboard = () => {
                             <td
                               key={col}
                               className={`
-                                px-4 py-3 text-center text-[12px] font-bold tracking-tight
+                                px-2 py-3 text-center text-[10px] whitespace-nowrap font-bold tracking-tight
                                 border-r border-b border-slate-100 dark:border-slate-800/40
-                                ${isDarkMode ? 'text-slate-100 bg-slate-900/30' : 'text-slate-900 bg-white'}
+                                ${theme.text}
                                 transition-all duration-200
-                                ${hoveredRow === i ? (isDarkMode ? 'bg-slate-800/60' : 'bg-blue-50/40') : ''}
                               `}
                             >
                               {String(row[col])}
@@ -861,11 +1211,11 @@ const AnalyticsDashboard = () => {
                             <td
                               key={m}
                               className={`
-                                px-4 py-2 tabular-nums font-bold text-[12px] text-center 
+                                px-2 py-2 tabular-nums font-bold text-[10px] whitespace-nowrap text-center 
                                 border-r border-b border-slate-100 dark:border-slate-800/40
                                 ${theme.text} 
                                 ${sortColumn === m ? (isDarkMode ? 'bg-emerald-900/20' : 'bg-emerald-50/30') : ''}
-                                ${m === 'moyenne_retard' ? 'min-w-[150px]' : ''}
+                                ${m === 'moyenne_retard' ? 'min-w-[80px]' : ''}
                               `}
                             >
                               {m === 'moyenne_retard' ? (
@@ -883,14 +1233,6 @@ const AnalyticsDashboard = () => {
                               )}
                             </td>
                           ))}
-                          <td className="px-4 py-2 text-center border-b border-slate-100 dark:border-slate-800/40 bg-slate-50/10 dark:bg-slate-800/10">
-                            <button
-                              onClick={() => handleDrillDown(row, 'temp')}
-                              className="p-1 px-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-600 hover:text-white transition-all active:scale-95 text-[10px] font-black uppercase"
-                            >
-                              Drill
-                            </button>
-                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -898,7 +1240,7 @@ const AnalyticsDashboard = () => {
                 </div>
 
                 {/* Pagination */}
-                <div className="p-4 border-t border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30 flex justify-between items-center mt-auto">
+                <div className="p-2 border-t border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30 flex justify-between items-center mt-auto">
                   <span className={`text-[10px] font-bold uppercase tracking-widest ${theme.textSecondary}`}>
                     Page {currentPage} of {totalPages} ({totalRows} records found)
                   </span>
@@ -906,14 +1248,14 @@ const AnalyticsDashboard = () => {
                     <button
                       onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                       disabled={currentPage === 1}
-                      className={`p-2.5 rounded-xl border ${theme.border} ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-white hover:bg-slate-50 text-slate-600'} disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95 shadow-sm hover:shadow-md`}
+                      className={`p-1.5 rounded-xl border ${theme.border} ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-white hover:bg-slate-50 text-slate-600'} disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95 shadow-sm hover:shadow-md`}
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                       disabled={currentPage >= totalPages}
-                      className={`p-2.5 rounded-xl border ${theme.border} ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-white hover:bg-slate-50 text-slate-600'} disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95 shadow-sm hover:shadow-md`}
+                      className={`p-1.5 rounded-xl border ${theme.border} ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-300' : 'bg-white hover:bg-slate-50 text-slate-600'} disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95 shadow-sm hover:shadow-md`}
                     >
                       <ChevronRight className="w-4 h-4" />
                     </button>
@@ -923,9 +1265,46 @@ const AnalyticsDashboard = () => {
             )}
 
           </div>
-
         </main>
       </div>
+
+      {/* Slicer Overlay */}
+      {showSlicer && (
+        <>
+          <div className="fixed inset-0 z-[250]" onClick={() => setShowSlicer(null)}></div>
+          <div
+            className={`fixed z-[260] w-48 rounded-xl border ${theme.border} ${isDarkMode ? 'bg-[#1e293b]' : 'bg-white'} shadow-2xl p-2 animate-in fade-in zoom-in-95`}
+            style={{ left: showSlicer.x, top: showSlicer.y + 10 }}
+          >
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 px-2 border-b border-slate-100 pb-1">Filter {showSlicer.col}</div>
+            <div className="max-h-48 overflow-y-auto scrollbar-thin">
+              <button
+                onClick={() => {
+                  const nf = { ...filters };
+                  delete nf[showSlicer.col];
+                  setFilters(nf);
+                  setShowSlicer(null);
+                }}
+                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold mb-1 transition-all ${!filters[showSlicer.col] ? 'bg-blue-500 text-white' : `${theme.text} hover:bg-slate-100`}`}
+              >
+                (All)
+              </button>
+              {Array.from(new Set(olapData.map(r => String(r[showSlicer.col])))).sort().map(val => (
+                <button
+                  key={val}
+                  onClick={() => {
+                    setFilters({ ...filters, [showSlicer.col]: val });
+                    setShowSlicer(null);
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold mb-1 transition-all ${filters[showSlicer.col] === val ? 'bg-blue-500 text-white' : `${theme.text} hover:bg-slate-100`}`}
+                >
+                  {val}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
