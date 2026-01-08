@@ -5,6 +5,8 @@ from .pool_setup import pool
 import json
 import logging
 from decimal import Decimal
+import random
+from datetime import datetime, timedelta
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -13,6 +15,8 @@ try:
     import oracledb
 except ImportError:
     oracledb = None
+
+
 
 @csrf_exempt
 @require_http_methods(["POST", "GET"])
@@ -37,9 +41,41 @@ def get_analyse_data(request):
         prod = data.get('prod', 'ALL')
         filters = data.get('filters', {}) # Specific member filters (Slice)
         
-        # 2. Connect to Oracle (Using Pool if available, or error out)
         if not pool:
-             return JsonResponse({'success': False, 'error': 'Database connection pool not available'}, status=500)
+            logger.info("Database pool not available, using MockOLAPService")
+            from .mock_service import MockOLAPService
+            service = MockOLAPService()
+            
+            # Map frontend dimension levels to service expectations if needed, 
+            # but they seem consistent (year, year+month, etc.)
+            
+            data_list = service.query(temp, clie, emp, prod, filters)
+            
+            # Extract dimension columns from the result
+            measure_columns = {
+                'nombre_commandes', 'moyenne_retard', 'total_retard',
+                'min_retard', 'max_retard', 'moy_prevue',
+                'moy_reelle', 'ecart_moyen'
+            }
+            if data_list:
+                dimension_columns = [col for col in data_list[0].keys() if col not in measure_columns]
+            else:
+                dimension_columns = []
+            
+            return JsonResponse({
+                'success': True,
+                'data': data_list,
+                'dimensions': {
+                    'temp': temp, 'clie': clie, 'emp': emp, 'prod': prod, 'filters': filters
+                },
+                'metadata': {
+                    'dimension_count': sum(1 for d in [temp, clie, emp, prod] if d != 'ALL'),
+                    'record_count': len(data_list),
+                    'dimension_columns': dimension_columns,
+                    'using_fake_data': True,
+                    'service_backend': 'MockOLAPService'
+                }
+            }, json_dumps_params={'ensure_ascii': False})
 
         connection = pool.acquire()
         cursor = connection.cursor()
