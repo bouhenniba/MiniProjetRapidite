@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Loader2 } from 'lucide-react';
 
 // Hooks & Utils
 import { useAnalytics } from '../hooks/useAnalytics';
@@ -132,17 +132,27 @@ const AnalyticsDashboard = () => {
   };
 
   const handleHierarchyNav = (dimKey: string, direction: 'up' | 'down', coords?: { x: number, y: number }) => {
-    const hierarchy = (dimKey === 'temp') ? ['ALL', 'year', 'year+saison', 'year+month'] :
-      (dimKey === 'emp') ? ['ALL', 'DEPARTEMENT', 'DEPARTEMENT+EMPLOYE'] :
-        (dimKey === 'clie') ? ['ALL', 'pays', 'pays+client'] : [];
-
-    if (dimKey === 'prod') {
-      if (dimensions.prod === 'ALL' && direction === 'down' && coords) {
-        setShowProdDrillMenu(coords);
-        return;
+    let hierarchy: string[] = [];
+    if (dimKey === 'temp') hierarchy = ['ALL', 'year', 'year+saison', 'year+month'];
+    else if (dimKey === 'emp') hierarchy = ['ALL', 'DEPARTEMENT', 'DEPARTEMENT+EMPLOYE'];
+    else if (dimKey === 'clie') hierarchy = ['ALL', 'pays', 'pays+client'];
+    else if (dimKey === 'prod') {
+      const curr = dimensions.prod;
+      if (curr.includes('categorie')) {
+        hierarchy = ['ALL', 'categorie', 'categorie+produit'];
+      } else if (curr.includes('fournisseur')) {
+        hierarchy = ['ALL', 'fournisseur', 'fournisseur+produit'];
+      } else {
+        // Default to category path if at ALL level
+        hierarchy = ['ALL', 'categorie', 'categorie+produit'];
       }
-      // Product hierarchy is more complex, handled in getHierarchyForDim utility
     }
+
+    if (dimKey === 'prod' && dimensions.prod === 'ALL' && direction === 'down' && coords) {
+      setShowProdDrillMenu(coords);
+      return;
+    }
+
 
     const currentVal = dimensions[dimKey as keyof typeof dimensions];
     const currentIndex = hierarchy.indexOf(currentVal);
@@ -172,7 +182,23 @@ const AnalyticsDashboard = () => {
   };
 
   return (
-    <div dir="ltr" className={`${isDarkMode ? 'dark' : ''} flex h-screen ${theme.bg} transition-colors duration-300 overflow-hidden font-sans antialiased text-slate-900 dark:text-slate-100`}>
+    <div dir="ltr" className={`${isDarkMode ? 'dark' : ''} flex h-screen ${theme.bg} transition-colors duration-300 overflow-hidden font-sans antialiased text-slate-900 dark:text-slate-100 relative`}>
+      {/* Loading Overlay */}
+      {loading && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-slate-900/10 dark:bg-slate-900/40 backdrop-blur-[2px] transition-all duration-300">
+          <div className={`p-6 rounded-3xl ${theme.glass} flex flex-col items-center gap-4 shadow-2xl scale-in-center border ${theme.border}`}>
+            <div className="relative">
+              <div className="w-12 h-12 rounded-full border-4 border-blue-500/20 animate-pulse"></div>
+              <Loader2 className="w-12 h-12 text-blue-500 animate-spin absolute top-0 left-0" />
+            </div>
+            <div className="flex flex-col items-center animate-pulse">
+              <span className={`text-xs font-black uppercase tracking-widest ${theme.text}`}>Synthesizing Data</span>
+              <span className={`text-[10px] font-bold ${theme.textSecondary} mt-1`}>Please wait...</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Sidebar
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}

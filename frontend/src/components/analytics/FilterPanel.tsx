@@ -32,10 +32,10 @@ export const FilterPanel = ({
 }: FilterPanelProps) => {
 
     const filterOptions = [
-        { key: 'temp', val: dimensions.temp, set: (v: any) => updateDimension('temp', v), opts: [['ALL', 'All Time'], ['year', 'Year'], ['year+saison', 'Season & Year'], ['year+month', 'Month & Year (Season)'], ['DIVIDER', ''], ['saison', 'Season'], ['month', 'Month']], label: 'Time', icon: Calendar },
-        { key: 'emp', val: dimensions.emp, set: (v: any) => updateDimension('emp', v), opts: [['ALL', 'All Staff'], ['EMPLOYE', 'Employee'], ['DEPARTEMENT', 'Department'], ['DEPARTEMENT+EMPLOYE', 'Dept & Emp']], label: 'Staff', icon: User },
-        { key: 'prod', val: dimensions.prod, set: (v: any) => updateDimension('prod', v), opts: [['ALL', 'All Products'], ['categorie', 'Category'], ['categorie+produit', 'Category & Product'], ['fournisseur', 'Supplier'], ['fournisseur+produit', 'Supplier & Product'], ['DIVIDER', ''], ['produit', 'Product Only'], ['categorie+produit+fournisseur', 'Cat & Prod & Supp']], label: 'Product', icon: Box },
-        { key: 'clie', val: dimensions.clie, set: (v: any) => updateDimension('clie', v), opts: [['ALL', 'All Clients'], ['client', 'Client'], ['pays', 'Country'], ['pays+client', 'Country & Client']], label: 'Client', icon: MapPin }
+        { key: 'temp', val: dimensions.temp, set: (v: any) => updateDimension('temp', v), opts: [['ALL', 'ALL'], ['year', 'Year'], ['year+saison', 'Year › Season'], ['year+month', 'Year › Month']], label: 'Time', icon: Calendar },
+        { key: 'emp', val: dimensions.emp, set: (v: any) => updateDimension('emp', v), opts: [['ALL', 'ALL'], ['DEPARTEMENT', 'Department'], ['DEPARTEMENT+EMPLOYE', 'Dept › Employee']], label: 'Staff', icon: User },
+        { key: 'prod', val: dimensions.prod, set: (v: any) => updateDimension('prod', v), opts: [['ALL', 'ALL'], ['categorie', 'Category'], ['categorie+produit', 'Category › Product'], ['DIVIDER', ''], ['fournisseur', 'Supplier'], ['fournisseur+produit', 'Supplier › Product']], label: 'Product', icon: Box },
+        { key: 'clie', val: dimensions.clie, set: (v: any) => updateDimension('clie', v), opts: [['ALL', 'ALL'], ['pays', 'Country'], ['pays+client', 'Country › Client']], label: 'Client', icon: MapPin }
     ];
 
     return (

@@ -4,54 +4,93 @@ import { COLUMN_TO_DIMENSION, HIERARCHIES, MEASURE_LABELS } from '../constants/a
 export const resolveColumn = (colName: string, keys: string[]) => {
     if (!colName) return '';
     const norm = colName.toLowerCase();
+    const lowerKeys = keys.map(k => k.toLowerCase());
 
-    // Exact match
-    let match = keys.find(k => k.toLowerCase() === norm);
-    if (match) return match;
-
-    // Fuzzy match with aliases
-    const aliases: Record<string, string[]> = {
-        year: ['annee', 'year', 'yr', 'an', 'date_id'],
-        month: ['mois', 'month', 'mon', 'month_id'],
-        saison: ['season', 'sais', 'trimestre'],
-        week: ['semaine'],
-        day: ['jour'],
-        client: ['cli_nom', 'customer'],
-        product: ['produit', 'libelle_produit'],
-        country: ['pays']
-    };
-
-    if (aliases[norm]) {
-        match = keys.find(k => {
-            const lowerK = k.toLowerCase();
-            return aliases[norm].some(a => lowerK === a || lowerK.includes(a));
-        });
-        if (match) return match;
+    // 1. Exact match (case-insensitive)
+    const exactIdx = lowerKeys.indexOf(norm);
+    if (exactIdx !== -1) {
+        const match = keys[exactIdx];
+        console.log(`✅ resolveColumn: Found exact match "${match}"`);
+        return match;
     }
 
-    // Partial inclusion
-    match = keys.find(k => k.toLowerCase().includes(norm));
-    if (match) return match;
+    // 2. Fuzzy match with aliases
+    const aliases: Record<string, string[]> = {
+        year: ['annee', 'year', 'yr', 'an', 'date_id', 'annee_id', 'id_annee', 'time_detail', 'temps'],
+        month: ['mois', 'month', 'mon', 'month_id', 'mois_id', 'id_mois', 'time_detail', 'temps'],
+        saison: ['season', 'saison', 'sais', 'trimestre', 'quarter', 'q', 'id_saison', 'time_detail', 'temps'],
+        week: ['semaine', 'week', 'wk'],
+        day: ['jour', 'day', 'd'],
+        client: ['cli_nom', 'customer', 'client', 'client_nom'],
+        product: ['produit', 'libelle_produit', 'product', 'prod'],
+        produit: ['produit', 'libelle_produit', 'product', 'prod'],
+        country: ['pays', 'country'],
+        pays: ['pays', 'country'],
+        categorie: ['categorie', 'category', 'cat'],
+        category: ['categorie', 'category', 'cat'],
+        fournisseur: ['fournisseur', 'supplier', 'supp'],
+        supplier: ['fournisseور', 'supplier', 'supp'],
+        employe: ['employe', 'employee', 'emp'],
+        employee: ['employe', 'employee', 'emp'],
+        departement: ['departement', 'department', 'dept'],
+        department: ['departement', 'department', 'dept']
+    };
 
+    // 3. Check aliases and synonyms
+    const searchTerms = [norm, ...(aliases[norm] || [])];
+
+    // Check if any alias exists as a substring or exact match in our keys
+    for (const term of searchTerms) {
+        const foundKeyIdx = lowerKeys.findIndex(k => k === term || k.includes(term) || term.includes(k));
+        if (foundKeyIdx !== -1) {
+            const match = keys[foundKeyIdx];
+            console.log(`✅ resolveColumn: Resolved "${colName}" to "${match}" via match for "${term}"`);
+            return match;
+        }
+    }
+
+    // 4. Reverse lookup in all alias lists
+    for (const [mainKey, aliasList] of Object.entries(aliases)) {
+        if (aliasList.includes(norm) || norm.includes(mainKey)) {
+            for (const alias of [mainKey, ...aliasList]) {
+                const foundKeyIdx = lowerKeys.findIndex(k => k === alias || k.includes(alias));
+                if (foundKeyIdx !== -1) {
+                    const match = keys[foundKeyIdx];
+                    console.log(`✅ resolveColumn: Resolved "${colName}" to "${match}" via reverse alias search`);
+                    return match;
+                }
+            }
+        }
+    }
+
+    console.warn(`❌ resolveColumn: No match for "${colName}" in [${keys.join(', ')}]`);
     return colName;
 };
 
-export const getDimensionLabel = (slug: string) => {
+export const getDimensionLabel = (slug: string): string => {
     if (!slug) return 'Select...';
+
+    // Handle combined keys like 'pays+client'
+    if (String(slug).includes('+')) {
+        return String(slug).split('+').map(part => getDimensionLabel(part)).join(' › ');
+    }
 
     const s = String(slug).toLowerCase();
     const specificMapping: Record<string, string> = {
         'year': 'Year', 'annee': 'Year',
         'month': 'Month', 'mois': 'Month',
-        'saison': 'Season',
-        'categorie': 'Category', 'produit': 'Product', 'fournisseur': 'Supplier',
-        'client': 'Client', 'pays': 'Country',
-        'employe': 'Employee', 'departement': 'Department',
+        'saison': 'Season', 'season': 'Season',
+        'categorie': 'Category', 'category': 'Category',
+        'produit': 'Product', 'product': 'Product',
+        'fournisseur': 'Supplier', 'supplier': 'Supplier',
+        'client': 'Client', 'customer': 'Client',
+        'pays': 'Country', 'country': 'Country',
+        'employe': 'Employee', 'employee': 'Employee',
+        'departement': 'Department', 'department': 'Department',
         'all': 'All'
     };
 
     if (specificMapping[s]) return specificMapping[s];
-    if (specificMapping[slug]) return specificMapping[slug];
 
     const dimKey = COLUMN_TO_DIMENSION[slug];
     const mapping: Record<string, string> = {

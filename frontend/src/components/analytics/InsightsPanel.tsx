@@ -1,6 +1,6 @@
 import { TrendingUp, AlertCircle } from 'lucide-react';
 import type { OLAPRecord, MeasureKey } from '../../types/analytics.types';
-import { getExtremeRecords, generateInsightText } from '../../utils/analytics.utils';
+import { getExtremeRecords, generateInsightText, getDimensionLabel } from '../../utils/analytics.utils';
 
 interface InsightsPanelProps {
     olapData: OLAPRecord[];
@@ -45,7 +45,7 @@ export const InsightsPanel = ({ olapData, dimensionColumns, theme, isDarkMode }:
                                     .filter(col => col !== 'month' && col !== 'year' && rec[col])
                                     .map(col => (
                                         <div key={col} className="flex justify-between gap-4 text-xs border-b border-dashed border-slate-100 dark:border-slate-700/50 pb-0.5 last:border-0">
-                                            <span className={`font-semibold capitalize opacity-70 ${theme.text}`}>{col}:</span>
+                                            <span className={`font-semibold capitalize opacity-70 ${theme.text}`}>{getDimensionLabel(col)}:</span>
                                             <span className={`font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{rec[col]}</span>
                                         </div>
                                     ))
@@ -90,7 +90,7 @@ export const InsightsPanel = ({ olapData, dimensionColumns, theme, isDarkMode }:
                                     .filter(col => col !== 'month' && col !== 'year' && rec[col])
                                     .map(col => (
                                         <div key={col} className="flex justify-between gap-4 text-xs border-b border-dashed border-slate-100 dark:border-slate-700/50 pb-0.5 last:border-0">
-                                            <span className={`font-semibold capitalize opacity-70 ${theme.text}`}>{col}:</span>
+                                            <span className={`font-semibold capitalize opacity-70 ${theme.text}`}>{getDimensionLabel(col)}:</span>
                                             <span className={`font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{rec[col]}</span>
                                         </div>
                                     ))

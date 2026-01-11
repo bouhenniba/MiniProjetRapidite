@@ -13,7 +13,7 @@ export const useAnalytics = () => {
         temp: 'year+month' as DimensionLevel,
         clie: 'pays+client' as DimensionLevel,
         emp: 'DEPARTEMENT+EMPLOYE' as DimensionLevel,
-        prod: 'categorie+produit+fournisseur' as DimensionLevel
+        prod: 'categorie+produit' as DimensionLevel
     });
 
     const fetchOLAPData = async () => {

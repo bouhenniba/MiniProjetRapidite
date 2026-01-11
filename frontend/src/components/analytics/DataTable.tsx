@@ -110,8 +110,10 @@ export const DataTable = ({
                             const canRoll = currentIndex !== -1 && currentIndex > 0;
                             return (
                                 <div key={key} className={`flex items-center gap-1.5 ${isDarkMode ? 'bg-slate-800/80' : 'bg-white'} px-2.5 py-1 rounded-full border ${isDarkMode ? 'border-slate-700/50' : 'border-slate-200'} h-8 shrink-0 hover:border-blue-400 transition-all shadow-sm ring-1 ring-black/5`}>
-                                    <span className="text-[9px] font-black uppercase text-blue-600 dark:text-blue-400 px-1 border-r border-slate-200 dark:border-slate-700 mr-1">{key}</span>
-                                    <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 max-w-[60px] truncate">{val}</span>
+                                    <span className="text-[9px] font-black uppercase text-blue-600 dark:text-blue-400 px-1 border-r border-slate-200 dark:border-slate-700 mr-1">{getDimensionLabel(key)}</span>
+                                    <span className="text-[9px] font-bold text-slate-600 dark:text-slate-300 max-w-[80px] truncate">
+                                        {getDimensionLabel(val)}
+                                    </span>
                                     <div className="flex items-center gap-0.5 ml-1 border-l border-slate-200 dark:border-slate-700 pl-1">
                                         <button
                                             onClick={(e) => {
@@ -137,7 +139,16 @@ export const DataTable = ({
                                             onClick={(e) => {
                                                 const rect = e.currentTarget.getBoundingClientRect();
                                                 const candidates = val.split('+');
-                                                const resolvedCols = candidates.map((c: string) => {
+
+                                                console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                                                console.log('🎯 FILTER BUTTON CLICKED');
+                                                console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                                                console.log('📊 Dimension:', key, '=', val);
+                                                console.log('📋 Column Names:', dimensionColumns.join(', '));
+                                                console.table(dimensionColumns);
+                                                console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+                                                const resolvedCols = Array.from(new Set(candidates.map((c: string) => {
                                                     let colToResolve = c;
                                                     if (c === 'ALL') {
                                                         if (key === 'temp') colToResolve = 'year';
@@ -145,16 +156,25 @@ export const DataTable = ({
                                                         else if (key === 'prod') colToResolve = 'categorie';
                                                         else if (key === 'clie') colToResolve = 'pays';
                                                     }
-                                                    return resolveColumn(colToResolve, dimensionColumns);
-                                                }).filter(Boolean);
+                                                    const resolved = resolveColumn(colToResolve, dimensionColumns);
+                                                    return dimensionColumns.includes(resolved) ? resolved : null;
+                                                }).filter(Boolean) as string[]));
+
+                                                console.log('📝 Resolved filters for:', key, '->', resolvedCols.join(' + '));
 
                                                 if (resolvedCols.length > 0) {
+                                                    console.log('✅ SUCCESS: Showing slicer with columns:', resolvedCols);
                                                     setShowSlicer({
                                                         cols: resolvedCols,
-                                                        activeCol: resolvedCols[resolvedCols.length - 1],
+                                                        activeCol: resolvedCols.length > 1 ? 'COMBINED' : resolvedCols[0],
                                                         x: rect.left,
                                                         y: rect.bottom
                                                     });
+                                                } else {
+                                                    console.error('❌ FAILURE: No valid columns found!');
+                                                    console.error('   Dimension:', key, '=', val);
+                                                    console.error('   Available columns:', dimensionColumns);
+                                                    console.error('   Tried to resolve:', candidates);
                                                 }
                                             }}
                                             className={`p-1.5 rounded-full transition-all ${val.split('+').some((c: string) => {

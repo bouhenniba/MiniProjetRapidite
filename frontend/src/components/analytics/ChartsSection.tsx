@@ -99,7 +99,7 @@ export const ChartsSection = ({
                             onChange={(e) => setChartXAxis(e.target.value)}
                             className={`text-xs font-bold outline-none cursor-pointer hover:text-blue-500 transition-colors ${isDarkMode ? 'bg-slate-800 text-slate-200' : 'bg-slate-100 text-slate-700'} py-1 pl-1 pr-2 rounded`}
                         >
-                            {dimensionColumns.map(col => <option key={col} value={col}>{col}</option>)}
+                            {dimensionColumns.map(col => <option key={col} value={col}>{getDimensionLabel(col)}</option>)}
                         </select>
                     </div>
 
@@ -135,12 +135,27 @@ export const ChartsSection = ({
                                 stroke={isDarkMode ? '#94a3b8' : '#64748b'}
                                 fontSize={10}
                                 tickMargin={10}
-                                label={{ value: `Dimension: ${getDimensionLabel(chartXAxis || dimensionColumns[0])}`, position: 'insideBottom', offset: -25, fontSize: 10, fontWeight: '800', fill: isDarkMode ? '#94a3b8' : '#1e293b', opacity: 0.5 }}
+                                label={{
+                                    value: `Dimension: ${getDimensionLabel(chartXAxis || dimensionColumns[0])}`,
+                                    position: 'insideBottom',
+                                    offset: -25,
+                                    fontSize: 12,
+                                    fontWeight: 'bold',
+                                    fill: isDarkMode ? '#cbd5e1' : '#0f172a'
+                                }}
                             />
                             <YAxis
                                 stroke={isDarkMode ? '#94a3b8' : '#64748b'}
                                 fontSize={10}
-                                label={{ value: 'Duration (Days)', angle: -90, position: 'insideLeft', offset: -30, fontSize: 10, fontWeight: '800', fill: isDarkMode ? '#94a3b8' : '#1e293b', opacity: 0.5 }}
+                                label={{
+                                    value: 'Duration (Days)',
+                                    angle: -90,
+                                    position: 'insideLeft',
+                                    offset: -30,
+                                    fontSize: 12,
+                                    fontWeight: 'bold',
+                                    fill: isDarkMode ? '#cbd5e1' : '#0f172a'
+                                }}
                             />
                             <Tooltip
                                 content={<CustomTooltip chartXAxis={chartXAxis} dimensionColumns={dimensionColumns} isDarkMode={isDarkMode} theme={theme} />}
@@ -173,7 +188,7 @@ export const ChartsSection = ({
                                 >
                                     <option value="None">None</option>
                                     {dimensionColumns.filter(c => c !== chartXAxis).map(c => (
-                                        <option key={c} value={c}>{c}</option>
+                                        <option key={c} value={c}>{getDimensionLabel(c)}</option>
                                     ))}
                                 </select>
                             </div>
@@ -224,12 +239,27 @@ export const ChartsSection = ({
                                 stroke={isDarkMode ? '#94a3b8' : '#64748b'}
                                 fontSize={10}
                                 tickMargin={10}
-                                label={{ value: `Dimension: ${getDimensionLabel(chartXAxis || dimensionColumns[0])}`, position: 'insideBottom', offset: -25, fontSize: 10, fontWeight: '800', fill: isDarkMode ? '#94a3b8' : '#1e293b', opacity: 0.5 }}
+                                label={{
+                                    value: `Dimension: ${getDimensionLabel(chartXAxis || dimensionColumns[0])}`,
+                                    position: 'insideBottom',
+                                    offset: -25,
+                                    fontSize: 12,
+                                    fontWeight: 'bold',
+                                    fill: isDarkMode ? '#cbd5e1' : '#0f172a'
+                                }}
                             />
                             <YAxis
                                 stroke={isDarkMode ? '#94a3b8' : '#64748b'}
                                 fontSize={10}
-                                label={{ value: MEASURE_LABELS[selectedMeasure], angle: -90, position: 'insideLeft', offset: -30, fontSize: 10, fontWeight: '800', fill: isDarkMode ? '#94a3b8' : '#1e293b', opacity: 0.5 }}
+                                label={{
+                                    value: MEASURE_LABELS[selectedMeasure],
+                                    angle: -90,
+                                    position: 'insideLeft',
+                                    offset: -30,
+                                    fontSize: 12,
+                                    fontWeight: 'bold',
+                                    fill: isDarkMode ? '#cbd5e1' : '#0f172a'
+                                }}
                             />
                             <Tooltip content={<CustomTooltip chartXAxis={chartXAxis} dimensionColumns={dimensionColumns} isDarkMode={isDarkMode} theme={theme} />} cursor={{ fill: isDarkMode ? '#334155' : '#f8fafc' }} />
 
