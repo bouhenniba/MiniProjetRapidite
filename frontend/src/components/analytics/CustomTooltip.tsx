@@ -1,4 +1,4 @@
-import { getDimensionLabel } from '../../utils/analytics.utils';
+
 
 interface CustomTooltipProps {
     active?: boolean;
